@@ -1,8 +1,5 @@
-use std::marker::PhantomData;
-
 use iced::{
-    widget::{button, column, container, row, shader::wgpu::Instance, text, Column, Row},
-    Application, Background, Color, Length,
+    theme::Palette, widget::{button, column, container, row, text}, Background, Color, Element, Length, Theme
 };
 
 #[derive(Eq, PartialEq)]
@@ -21,7 +18,7 @@ impl Default for PomodoroState {
 }
 
 #[derive(Default)]
-struct PomodoroTimerChamber {
+struct PomodoroTimeChamber {
     minutes: u32,
     seconds: u32,
     state: PomodoroState,
@@ -29,13 +26,13 @@ struct PomodoroTimerChamber {
 
 #[derive(Clone, Debug)]
 enum Message {
-    StartTimer,
-    PauseTimer,
+    StartTime,
+    PauseTime,
 }
 
-impl PomodoroTimerChamber {
-    fn view(&self) -> Column<Message> {
-        column![
+impl PomodoroTimeChamber {
+    fn view(&self) -> Element<Message> {
+        container(column![
             container(text(format!("{:02}:{:02}", self.minutes, self.seconds)).size(50))
                 .center_x(Length::Fill)
                 .padding(20)
@@ -46,7 +43,7 @@ impl PomodoroTimerChamber {
                     ..container::Style::default()
                 }),
             row![
-                container(button("Start").on_press(Message::StartTimer))
+                container(button("Start").on_press(Message::StartTime))
                     .padding(5)
                     .width(Length::FillPortion(1))
                     .align_right(Length::Fill),
@@ -56,21 +53,21 @@ impl PomodoroTimerChamber {
                     } else {
                         "Pause"
                     })
-                    .on_press(Message::PauseTimer)
+                    .on_press(Message::PauseTime)
                 )
                 .padding(5)
                 .width(Length::FillPortion(1))
                 .align_left(Length::Fill),
             ],
-        ]
+        ]).into()
     }
 
     fn update(&mut self, message: Message) {
         match message {
-            Message::StartTimer => {
+            Message::StartTime => {
                 self.state = PomodoroState::Work;
             }
-            Message::PauseTimer => {
+            Message::PauseTime => {
                 self.state = match self.state {
                     PomodoroState::Paused => PomodoroState::Stopped,
                     _ => PomodoroState::Paused,
@@ -83,12 +80,22 @@ impl PomodoroTimerChamber {
 fn main() -> iced::Result {
     iced::application(
         "Pomodoro Time Chamber",
-        PomodoroTimerChamber::update,
-        PomodoroTimerChamber::view,
+        PomodoroTimeChamber::update,
+        PomodoroTimeChamber::view,
     )
     .window(iced::window::Settings {
         size: iced::Size::new(400.0, 300.0),
         ..iced::window::Settings::default()
     })
+    .theme(app_theme)
     .run()
+}
+fn app_theme(state: &PomodoroTimeChamber) -> Theme {
+    let primary = Color::from_rgb(0.957, 0.459, 0.325);
+    let background = Color::from_rgb(0.984, 0.961, 0.937);
+    Theme::custom("App theme".into(), Palette {
+        background,
+        primary,
+        ..Palette::LIGHT
+    })
 }
