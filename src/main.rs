@@ -1,12 +1,16 @@
 mod widgets;
 pub mod utils;
+pub mod assets;
 
 use iced::{
-    theme::Palette, widget::{button, column, container, row, text}, Background, Color, Element, Length, Theme
+    theme::Palette, widget::{button::{self, Button, Status}, column, container, row, svg::{self, Handle, Svg} }, Border, Color, Element, Length, Theme
 };
 use widgets::timer;
+use assets::{PLAY_SVG, TITLE_SVG};
 
+use crate::utils::colors;
 
+const BUTTON_WIDTH: f32 = 50.0;
 
 #[derive(Eq, PartialEq)]
 enum PomodoroState {
@@ -50,20 +54,26 @@ enum Message {
 
 impl PomodoroTimeChamber {
     fn view(&self) -> Element<Message> {
+        let timer_height = 300.0;
+        let timer_padding = 20.0;
+
         container(column![
+            Svg::new(Handle::from_memory(TITLE_SVG.to_vec()))
+                .width(Length::Fill)
+                .height(Length::Fixed(200.0)),
             container(timer::timer(
-                100.0,
+                timer_height / 2.0,
                 format!("{:02}:{:02}", self.minutes, self.seconds),
                 0.5,
                 timer::Status::Working
-            )).padding(5).center_x(Length::FillPortion(1)),
+            )).padding(5).center_x(Length::FillPortion(1)).height(Length::Fixed(timer_height + timer_padding)),
             row![
-                container(button("Start").on_press(Message::StartTime))
+                container(Button::new(Svg::new(Handle::from_memory(PLAY_SVG.to_vec())).width(BUTTON_WIDTH * 0.3).height(BUTTON_WIDTH * 0.3)).width(BUTTON_WIDTH).height(BUTTON_WIDTH).on_press(Message::StartTime).style(make_button_style))
                     .padding(5)
                     .width(Length::FillPortion(1))
                     .align_right(Length::Fill),
                 container(
-                    button(if self.state == PomodoroState::Paused {
+                    Button::new(if self.state == PomodoroState::Paused {
                         "Stop"
                     } else {
                         "Pause"
@@ -99,7 +109,7 @@ fn main() -> iced::Result {
         PomodoroTimeChamber::view,
     )
     .window(iced::window::Settings {
-        size: iced::Size::new(400.0, 300.0),
+        min_size: Some(iced::Size::new(600.0, 400.0)),
         ..iced::window::Settings::default()
     })
     .theme(make_app_theme_with_app)
@@ -117,4 +127,19 @@ fn make_app_theme() -> Theme {
         primary,
         ..Palette::LIGHT
     })
+}
+
+fn make_button_style(theme: &Theme, status: Status) -> button::Style {
+    button::Style {
+        background: Some(match status {
+            Status::Hovered => colors::dark_border(theme.palette().primary),
+            _ => theme.palette().primary,
+        }.into()),
+        border: Border {
+            radius: (BUTTON_WIDTH / 2.0).into(), // round, half the width
+            width: 2.0,
+            color: colors::dark_border(theme.palette().primary)
+        },
+        ..button::Style::default()
+    }
 }
