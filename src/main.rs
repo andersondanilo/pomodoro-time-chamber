@@ -1,145 +1,205 @@
-mod widgets;
-pub mod utils;
-pub mod assets;
+use std::{thread, time::Duration};
+use pancurses::{curs_set, endwin, has_colors, init_pair, initscr, noecho, start_color, ColorPair, Input, Window, COLOR_BLACK, COLOR_BLUE, COLOR_RED, COLOR_WHITE};
 
-use iced::{
-    theme::Palette, widget::{button::{self, Button, Status}, column, container, row, svg::{self, Handle, Svg} }, Border, Color, Element, Length, Theme
-};
-use widgets::timer;
-use assets::{PLAY_SVG, TITLE_SVG};
+mod number_ascii_art;
 
-use crate::utils::colors;
+const COLOR_NORMAL_INDEX: u8 = 0;
+const COLOR_POMODORO_INDEX: u8 = 1;
+const COLOR_HOTKEY_INDEX: u8 = 2;
 
-const BUTTON_WIDTH: f32 = 50.0;
-
-#[derive(Eq, PartialEq)]
-enum PomodoroState {
-    Work,
-    ShortBreak,
-    LongBreak,
-    Paused,
-    Stopped,
+enum AppMode {
+    Normal,
+    TaskTextInput,
 }
 
-impl Default for PomodoroState {
-    fn default() -> Self {
-        PomodoroState::Stopped
-    }
+struct Task {
+    text: String,
 }
 
-struct PomodoroTimeChamber {
-    minutes: u32,
-    seconds: u32,
-    state: PomodoroState,
-    app_theme: Theme,
+struct TaskTextInputState {
+    input_buffer: String,
+    y: i32,
+    x: i32,
 }
 
-impl Default for PomodoroTimeChamber {
-    fn default() -> Self {
-        Self {
-            minutes: 0,
-            seconds: 0,
-            state: PomodoroState::default(),
-            app_theme: make_app_theme(),
+struct App<'a> {
+    win: &'a Window,
+    mode: AppMode,
+    current_task_text: Option<TaskTextInputState>,
+    tasks: Vec<Task>,
+}
+
+impl<'a> App<'a> {
+    fn new(win: &'a Window) -> Self {
+        App {
+            win,
+            mode: AppMode::Normal,
+            current_task_text: None,
+            tasks: Vec::new(),
         }
     }
-}
 
+    fn initialize(&mut self) {
+        let win = self.win;
+        win.keypad(true);
+        win.nodelay(true);
+        win.refresh();
+        noecho();
+        curs_set(0);
 
-#[derive(Clone, Debug)]
-enum Message {
-    StartTime,
-    PauseTime,
-}
+        if has_colors() {
+            start_color();
+        }
 
-impl PomodoroTimeChamber {
-    fn view(&self) -> Element<Message> {
-        let timer_height = 300.0;
-        let timer_padding = 20.0;
+        init_pair(COLOR_NORMAL_INDEX as i16, COLOR_WHITE, COLOR_BLACK);
+        init_pair(COLOR_POMODORO_INDEX as i16, COLOR_RED, COLOR_BLACK);
+        init_pair(COLOR_HOTKEY_INDEX as i16, COLOR_BLUE, COLOR_BLACK);
 
-        container(column![
-            Svg::new(Handle::from_memory(TITLE_SVG.to_vec()))
-                .width(Length::Fill)
-                .height(Length::Fixed(200.0)),
-            container(timer::timer(
-                timer_height / 2.0,
-                format!("{:02}:{:02}", self.minutes, self.seconds),
-                0.5,
-                timer::Status::Working
-            )).padding(5).center_x(Length::FillPortion(1)).height(Length::Fixed(timer_height + timer_padding)),
-            row![
-                container(Button::new(Svg::new(Handle::from_memory(PLAY_SVG.to_vec())).width(BUTTON_WIDTH * 0.3).height(BUTTON_WIDTH * 0.3)).width(BUTTON_WIDTH).height(BUTTON_WIDTH).on_press(Message::StartTime).style(make_button_style))
-                    .padding(5)
-                    .width(Length::FillPortion(1))
-                    .align_right(Length::Fill),
-                container(
-                    Button::new(if self.state == PomodoroState::Paused {
-                        "Stop"
-                    } else {
-                        "Pause"
-                    })
-                    .on_press(Message::PauseTime)
-                )
-                .padding(5)
-                .width(Length::FillPortion(1))
-                .align_left(Length::Fill),
-            ],
-        ]).into()
+        self.draw();
     }
 
-    fn update(&mut self, message: Message) {
-        match message {
-            Message::StartTime => {
-                self.state = PomodoroState::Work;
-            }
-            Message::PauseTime => {
-                self.state = match self.state {
-                    PomodoroState::Paused => PomodoroState::Stopped,
-                    _ => PomodoroState::Paused,
+    fn redraw(&self) {
+        self.win.clear();
+        self.draw();
+    }
+
+    fn draw(&self) {
+        let win = self.win;
+        let max_x = win.get_max_x();
+        let right_column_size = 40;
+
+        win.attron(ColorPair(COLOR_NORMAL_INDEX));
+
+        self.draw_utf8_box(0, 0, win.get_max_x() - right_column_size, win.get_max_y());
+
+        win.mv(0, 2);
+        win.printw("| Tasks |");
+
+        let start_left_column = max_x - right_column_size + 3;
+
+        self.draw_clock(Duration::from_secs(125), 0, start_left_column);
+
+        win.attron(ColorPair(COLOR_HOTKEY_INDEX));
+        win.mvaddstr(7, start_left_column, "a - Add new task");
+        win.mvaddstr(8, start_left_column, "q - Quit");
+        win.attroff(ColorPair(COLOR_NORMAL_INDEX));
+    }
+
+    fn draw_utf8_box(&self, x: i32, y: i32, w: i32, h: i32) {
+        let win = self.win;
+        win.mvaddstr(y, x, "┌");
+        win.mvaddstr(y, x + w - 1, "┐");
+        win.mvaddstr(y + h - 1, x, "└");
+
+        win.mvaddstr(y + h - 1, x + w - 1, "┘");
+
+
+        for i in (x + 1)..(x + w - 1) {
+            win.mvaddstr(y, i, "─");
+            win.mvaddstr(y + h - 1, i, "─");
+        }
+        for j in (y + 1)..(y + h - 1) {
+            win.mvaddstr(j, x, "│");
+            win.mvaddstr(j, x + w - 1, "│");
+        }
+    }
+
+    fn draw_clock(&self, duration: Duration, y: i32, x: i32) {
+        let total_seconds = duration.as_secs();
+        let minutes = (total_seconds % 3600) / 60;
+        let seconds = total_seconds % 60;
+        let clock_text = format!(
+            "{:02}:{:02}",
+            minutes,
+            seconds,
+        );
+        let mut next_x = x;
+        let mut last_ch = None;
+
+        for (i, ch) in clock_text.chars().enumerate() {
+            let art = match ch {
+                ':' => number_ascii_art::NUMBER_SEPARATOR_ASCII_ART,
+                n => number_ascii_art::NUMBER_ASCII_ART[n.to_digit(10).unwrap() as usize],
+            };
+
+            if i > 0 {
+                if last_ch == Some(':') || ch == ':' {
+                    next_x += 6;
+                } else {
+                    next_x += number_ascii_art::NUMBER_WIDTH + 2;
                 }
             }
+
+            self.draw_ascii_art(art, next_x, y);
+
+            last_ch = Some(ch);
         }
     }
-}
 
-fn main() -> iced::Result {
-    iced::application(
-        "Pomodoro Time Chamber",
-        PomodoroTimeChamber::update,
-        PomodoroTimeChamber::view,
-    )
-    .window(iced::window::Settings {
-        min_size: Some(iced::Size::new(600.0, 400.0)),
-        ..iced::window::Settings::default()
-    })
-    .theme(make_app_theme_with_app)
-    .run()
-}
-fn make_app_theme_with_app(state: &PomodoroTimeChamber) -> Theme {
-    make_app_theme()
-}
+    fn draw_ascii_art(&self, art: &str, x: i32, y: i32) {
+        let win = self.win;
+        win.attron(ColorPair(COLOR_POMODORO_INDEX));
+        for (i, line) in art.lines().enumerate() {
+            win.mvaddstr(y + i as i32, x, line);
+        }
+        win.attroff(ColorPair(COLOR_POMODORO_INDEX));
+    }
 
-fn make_app_theme() -> Theme {
-    let primary = Color::from_rgb(0.957, 0.459, 0.325);
-    let background = Color::from_rgb(0.984, 0.961, 0.937);
-    Theme::custom("App theme".into(), Palette {
-        background,
-        primary,
-        ..Palette::LIGHT
-    })
-}
+    fn tick(&mut self) -> Option<()> {
+        let win = self.win;
+        let should_countinue = match self.mode {
+            AppMode::Normal => {
+                match win.getch() {
+                    Some(Input::Character('q')) => None,
+                    Some(Input::Character('a')) => {
+                        self.action_start_add_task();
+                        Some(())
+                    },
+                    Some(Input::KeyResize) => {
+                        self.redraw();
+                        Some(())
+                    },
+                    _ => {Some(())}
+                }
+            }
+            AppMode::TaskTextInput => {
+                Some(())
+            }
+        };
+        
+        thread::sleep(Duration::from_millis(100));
+        should_countinue
+    }
 
-fn make_button_style(theme: &Theme, status: Status) -> button::Style {
-    button::Style {
-        background: Some(match status {
-            Status::Hovered => colors::dark_border(theme.palette().primary),
-            _ => theme.palette().primary,
-        }.into()),
-        border: Border {
-            radius: (BUTTON_WIDTH / 2.0).into(), // round, half the width
-            width: 2.0,
-            color: colors::dark_border(theme.palette().primary)
-        },
-        ..button::Style::default()
+    fn finish(&mut self) {
+        endwin();
+    }
+
+    fn action_start_add_task(&mut self) {
+        let (y, x) = ((self.tasks.len() as i32) + 2, 3);
+        self.win.mvaddstr(y, x - 1, "🍅");
+        self.win.mvaddstr(y, x - 1, "TEST");
+        self.mode = AppMode::TaskTextInput;
+        self.current_task_text = Some(TaskTextInputState {
+            input_buffer: String::new(),
+            y,
+            x,
+        });
     }
 }
+
+fn main() {
+    let win = initscr();
+
+    let mut app = App::new(&win);
+    app.initialize();
+
+    loop {
+        if app.tick().is_none() {
+            break;
+        }
+    }
+
+    app.finish();
+}
+
