@@ -1,11 +1,131 @@
-use std::{thread, time::Duration};
-use pancurses::{curs_set, endwin, has_colors, init_pair, initscr, noecho, start_color, ColorPair, Input, Window, COLOR_BLACK, COLOR_BLUE, COLOR_RED, COLOR_WHITE};
+use std::{
+    io,
+    time::{Duration, Instant},
+};
+
+use ratatui::{
+    DefaultTerminal, Frame,
+    crossterm::event::{self, Event, KeyCode, KeyEventKind},
+    layout::{Constraint, Layout, Rect},
+    style::{Color, Style},
+    text::{Line, Span},
+    widgets::{Block, Padding, Paragraph},
+};
 
 mod number_ascii_art;
 
-const COLOR_NORMAL_INDEX: u8 = 0;
-const COLOR_POMODORO_INDEX: u8 = 1;
-const COLOR_HOTKEY_INDEX: u8 = 2;
+const SIDEBAR_WIDTH: u16 = 40;
+
+struct Theme {
+    /// Background of the whole screen (sidebar).
+    background: Color,
+    /// Background of the tasks panel.
+    panel_background: Color,
+    foreground: Color,
+    hotkey: Color,
+    /// Status line background for each pomodoro state.
+    status_idle: Color,
+    status_work: Color,
+    status_short_break: Color,
+    status_long_break: Color,
+    /// Background of the selected task.
+    selection: Color,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Theme {
+            background: Color::Rgb(0x1a, 0x1b, 0x26),
+            panel_background: Color::Rgb(0x24, 0x28, 0x3b),
+            foreground: Color::White,
+            hotkey: Color::Blue,
+            status_idle: Color::DarkGray,
+            status_work: Color::Red,
+            status_short_break: Color::Green,
+            status_long_break: Color::Blue,
+            selection: Color::Rgb(0x3b, 0x42, 0x61),
+        }
+    }
+}
+
+struct Keyboard {
+    quit: KeyCode,
+    toggle_pomodoro: KeyCode,
+    add_task: KeyCode,
+    edit_task: KeyCode,
+    toggle_done: KeyCode,
+    delete_task: KeyCode,
+    increase_estimate: KeyCode,
+    decrease_estimate: KeyCode,
+    select_next: KeyCode,
+    select_previous: KeyCode,
+    confirm_task: KeyCode,
+    cancel_task: KeyCode,
+}
+
+impl Default for Keyboard {
+    fn default() -> Self {
+        Keyboard {
+            quit: KeyCode::Char('q'),
+            toggle_pomodoro: KeyCode::Char('s'),
+            add_task: KeyCode::Char('a'),
+            edit_task: KeyCode::Char('e'),
+            toggle_done: KeyCode::Char('x'),
+            delete_task: KeyCode::Char('d'),
+            increase_estimate: KeyCode::Char('+'),
+            decrease_estimate: KeyCode::Char('-'),
+            select_next: KeyCode::Char('j'),
+            select_previous: KeyCode::Char('k'),
+            confirm_task: KeyCode::Enter,
+            cancel_task: KeyCode::Esc,
+        }
+    }
+}
+
+struct PomodoroConfig {
+    work_minutes: u64,
+    short_break_minutes: u64,
+    long_break_minutes: u64,
+    /// A long break replaces the short one after this many pomodoros.
+    long_break_interval: u32,
+}
+
+impl Default for PomodoroConfig {
+    fn default() -> Self {
+        PomodoroConfig {
+            work_minutes: 25,
+            short_break_minutes: 5,
+            long_break_minutes: 15,
+            long_break_interval: 4,
+        }
+    }
+}
+
+#[derive(Default)]
+struct Config {
+    theme: Theme,
+    keyboard: Keyboard,
+    pomodoro: PomodoroConfig,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum PomodoroState {
+    Idle,
+    Work,
+    ShortBreak,
+    LongBreak,
+}
+
+impl PomodoroState {
+    fn label(self) -> &'static str {
+        match self {
+            PomodoroState::Idle => "Idle",
+            PomodoroState::Work => "Focus",
+            PomodoroState::ShortBreak => "Short break",
+            PomodoroState::LongBreak => "Long break",
+        }
+    }
+}
 
 enum AppMode {
     Normal,
@@ -14,192 +134,421 @@ enum AppMode {
 
 struct Task {
     text: String,
+    estimated_pomodoros: u32,
+    completed_pomodoros: u32,
+    done: bool,
 }
 
-struct TaskTextInputState {
-    input_buffer: String,
-    y: i32,
-    x: i32,
+impl Task {
+    fn marker(&self) -> &'static str {
+        if self.done { "[x]" } else { "[ ]" }
+    }
 }
 
-struct App<'a> {
-    win: &'a Window,
+struct App {
+    config: Config,
     mode: AppMode,
-    current_task_text: Option<TaskTextInputState>,
+    input_buffer: String,
     tasks: Vec<Task>,
+    selected_task: usize,
+    /// Index of the task being edited; `None` when adding a new one.
+    editing_task: Option<usize>,
+    should_quit: bool,
+    pomodoro_state: PomodoroState,
+    /// When the current phase ends; `None` while idle.
+    phase_ends_at: Option<Instant>,
+    completed_pomodoros: u32,
 }
 
-impl<'a> App<'a> {
-    fn new(win: &'a Window) -> Self {
+impl App {
+    fn new(config: Config) -> Self {
         App {
-            win,
+            config,
             mode: AppMode::Normal,
-            current_task_text: None,
+            input_buffer: String::new(),
             tasks: Vec::new(),
+            selected_task: 0,
+            editing_task: None,
+            should_quit: false,
+            pomodoro_state: PomodoroState::Idle,
+            phase_ends_at: None,
+            completed_pomodoros: 0,
         }
     }
 
-    fn initialize(&mut self) {
-        let win = self.win;
-        win.keypad(true);
-        win.nodelay(true);
-        win.refresh();
-        noecho();
-        curs_set(0);
-
-        if has_colors() {
-            start_color();
-        }
-
-        init_pair(COLOR_NORMAL_INDEX as i16, COLOR_WHITE, COLOR_BLACK);
-        init_pair(COLOR_POMODORO_INDEX as i16, COLOR_RED, COLOR_BLACK);
-        init_pair(COLOR_HOTKEY_INDEX as i16, COLOR_BLUE, COLOR_BLACK);
-
-        self.draw();
-    }
-
-    fn redraw(&self) {
-        self.win.clear();
-        self.draw();
-    }
-
-    fn draw(&self) {
-        let win = self.win;
-        let max_x = win.get_max_x();
-        let right_column_size = 40;
-
-        win.attron(ColorPair(COLOR_NORMAL_INDEX));
-
-        self.draw_utf8_box(0, 0, win.get_max_x() - right_column_size, win.get_max_y());
-
-        win.mv(0, 2);
-        win.printw("| Tasks |");
-
-        let start_left_column = max_x - right_column_size + 3;
-
-        self.draw_clock(Duration::from_secs(125), 0, start_left_column);
-
-        win.attron(ColorPair(COLOR_HOTKEY_INDEX));
-        win.mvaddstr(7, start_left_column, "a - Add new task");
-        win.mvaddstr(8, start_left_column, "q - Quit");
-        win.attroff(ColorPair(COLOR_NORMAL_INDEX));
-    }
-
-    fn draw_utf8_box(&self, x: i32, y: i32, w: i32, h: i32) {
-        let win = self.win;
-        win.mvaddstr(y, x, "┌");
-        win.mvaddstr(y, x + w - 1, "┐");
-        win.mvaddstr(y + h - 1, x, "└");
-
-        win.mvaddstr(y + h - 1, x + w - 1, "┘");
-
-
-        for i in (x + 1)..(x + w - 1) {
-            win.mvaddstr(y, i, "─");
-            win.mvaddstr(y + h - 1, i, "─");
-        }
-        for j in (y + 1)..(y + h - 1) {
-            win.mvaddstr(j, x, "│");
-            win.mvaddstr(j, x + w - 1, "│");
-        }
-    }
-
-    fn draw_clock(&self, duration: Duration, y: i32, x: i32) {
-        let total_seconds = duration.as_secs();
-        let minutes = (total_seconds % 3600) / 60;
-        let seconds = total_seconds % 60;
-        let clock_text = format!(
-            "{:02}:{:02}",
-            minutes,
-            seconds,
-        );
-        let mut next_x = x;
-        let mut last_ch = None;
-
-        for (i, ch) in clock_text.chars().enumerate() {
-            let art = match ch {
-                ':' => number_ascii_art::NUMBER_SEPARATOR_ASCII_ART,
-                n => number_ascii_art::NUMBER_ASCII_ART[n.to_digit(10).unwrap() as usize],
-            };
-
-            if i > 0 {
-                if last_ch == Some(':') || ch == ':' {
-                    next_x += 6;
-                } else {
-                    next_x += number_ascii_art::NUMBER_WIDTH + 2;
-                }
-            }
-
-            self.draw_ascii_art(art, next_x, y);
-
-            last_ch = Some(ch);
-        }
-    }
-
-    fn draw_ascii_art(&self, art: &str, x: i32, y: i32) {
-        let win = self.win;
-        win.attron(ColorPair(COLOR_POMODORO_INDEX));
-        for (i, line) in art.lines().enumerate() {
-            win.mvaddstr(y + i as i32, x, line);
-        }
-        win.attroff(ColorPair(COLOR_POMODORO_INDEX));
-    }
-
-    fn tick(&mut self) -> Option<()> {
-        let win = self.win;
-        let should_countinue = match self.mode {
-            AppMode::Normal => {
-                match win.getch() {
-                    Some(Input::Character('q')) => None,
-                    Some(Input::Character('a')) => {
-                        self.action_start_add_task();
-                        Some(())
-                    },
-                    Some(Input::KeyResize) => {
-                        self.redraw();
-                        Some(())
-                    },
-                    _ => {Some(())}
-                }
-            }
-            AppMode::TaskTextInput => {
-                Some(())
-            }
+    fn phase_duration(&self, state: PomodoroState) -> Duration {
+        let config = &self.config.pomodoro;
+        let minutes = match state {
+            PomodoroState::Idle | PomodoroState::Work => config.work_minutes,
+            PomodoroState::ShortBreak => config.short_break_minutes,
+            PomodoroState::LongBreak => config.long_break_minutes,
         };
-        
-        thread::sleep(Duration::from_millis(100));
-        should_countinue
+        Duration::from_secs(minutes * 60)
     }
 
-    fn finish(&mut self) {
-        endwin();
+    fn remaining(&self) -> Duration {
+        match self.phase_ends_at {
+            Some(end) => end.saturating_duration_since(Instant::now()),
+            None => self.phase_duration(PomodoroState::Idle),
+        }
+    }
+
+    fn start_phase(&mut self, state: PomodoroState) {
+        self.pomodoro_state = state;
+        self.phase_ends_at = Some(Instant::now() + self.phase_duration(state));
+    }
+
+    fn stop_pomodoro(&mut self) {
+        self.pomodoro_state = PomodoroState::Idle;
+        self.phase_ends_at = None;
+    }
+
+    /// Advances to the next phase once the current one has run out.
+    fn update_pomodoro(&mut self) {
+        let Some(end) = self.phase_ends_at else {
+            return;
+        };
+        if Instant::now() < end {
+            return;
+        }
+
+        match self.pomodoro_state {
+            PomodoroState::Work => {
+                self.completed_pomodoros += 1;
+                if let Some(task) = self.tasks.iter_mut().find(|task| !task.done) {
+                    task.completed_pomodoros += 1;
+                    if task.estimated_pomodoros > 0
+                        && task.completed_pomodoros >= task.estimated_pomodoros
+                    {
+                        task.done = true;
+                    }
+                }
+                let interval = self.config.pomodoro.long_break_interval.max(1);
+                if self.completed_pomodoros % interval == 0 {
+                    self.start_phase(PomodoroState::LongBreak);
+                } else {
+                    self.start_phase(PomodoroState::ShortBreak);
+                }
+            }
+            _ => self.stop_pomodoro(),
+        }
+    }
+
+    fn status_color(&self) -> Color {
+        let theme = &self.config.theme;
+        match self.pomodoro_state {
+            PomodoroState::Idle => theme.status_idle,
+            PomodoroState::Work => theme.status_work,
+            PomodoroState::ShortBreak => theme.status_short_break,
+            PomodoroState::LongBreak => theme.status_long_break,
+        }
+    }
+
+    fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
+        while !self.should_quit {
+            self.update_pomodoro();
+            terminal.draw(|frame| self.draw(frame))?;
+            self.handle_events()?;
+        }
+        Ok(())
+    }
+
+    fn draw(&self, frame: &mut Frame) {
+        let theme = &self.config.theme;
+        frame.render_widget(
+            Block::new().style(Style::new().fg(theme.foreground).bg(theme.background)),
+            frame.area(),
+        );
+
+        let [left, right] = Layout::horizontal([
+            Constraint::Length(SIDEBAR_WIDTH),
+            Constraint::Fill(1),
+        ])
+        .areas(frame.area());
+
+        self.draw_sidebar(frame, left);
+        self.draw_tasks(frame, right);
+    }
+
+    fn draw_tasks(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::new()
+            .style(Style::new().bg(self.config.theme.panel_background))
+            .padding(Padding::new(2, 2, 1, 1));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let [title_area, tasks_area] =
+            Layout::vertical([Constraint::Length(2), Constraint::Fill(1)]).areas(inner);
+        frame.render_widget(Paragraph::new("Tasks"), title_area);
+
+        let editing = matches!(self.mode, AppMode::TaskTextInput);
+        let mut lines: Vec<Line> = self
+            .tasks
+            .iter()
+            .enumerate()
+            .map(|(i, task)| {
+                if editing && self.editing_task == Some(i) {
+                    Line::from(format!("{} {}█", task.marker(), self.input_buffer))
+                } else {
+                    Line::from(format!("{} {}", task.marker(), task.text))
+                }
+            })
+            .collect();
+
+        if editing && self.editing_task.is_none() {
+            lines.push(Line::from(format!("[ ] {}█", self.input_buffer)));
+        }
+
+        // Highlight the whole row (up to the panel's right padding), not just the text.
+        let selected_row = self.selected_task as u16;
+        if !self.tasks.is_empty() && selected_row < tasks_area.height {
+            let row = Rect::new(tasks_area.x, tasks_area.y + selected_row, tasks_area.width, 1);
+            frame.render_widget(
+                Block::new().style(Style::new().bg(self.config.theme.selection)),
+                row,
+            );
+
+            let task = &self.tasks[self.selected_task];
+            if !editing && task.estimated_pomodoros > 0 {
+                let counter = format!(
+                    "({}/{})",
+                    task.completed_pomodoros, task.estimated_pomodoros
+                );
+                frame.render_widget(Paragraph::new(counter).right_aligned(), row);
+            }
+        }
+
+        frame.render_widget(Paragraph::new(lines), tasks_area);
+    }
+
+    fn draw_sidebar(&self, frame: &mut Frame, area: Rect) {
+        let inner = Block::new()
+            .padding(Padding::new(3, 3, 1, 1))
+            .inner(area);
+        let [clock_area, _, status_area, _, hotkeys_area] = Layout::vertical([
+            Constraint::Length(6),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Fill(1),
+        ])
+        .areas(inner);
+
+        // Round up so the clock shows 00:01 until the last second has passed.
+        let clock = clock_lines(Duration::from_secs(self.remaining().as_secs_f64().ceil() as u64));
+        frame.render_widget(Paragraph::new(clock).style(Style::new().fg(self.status_color())), clock_area);
+
+        let status_style = Style::new()
+            .fg(self.config.theme.background)
+            .bg(self.status_color());
+        frame.render_widget(
+            Paragraph::new(self.pomodoro_state.label())
+                .centered()
+                .style(status_style),
+            status_area,
+        );
+
+        let keyboard = &self.config.keyboard;
+        let hotkeys = match self.mode {
+            AppMode::Normal => vec![
+                (
+                    keyboard.toggle_pomodoro,
+                    if self.pomodoro_state == PomodoroState::Idle {
+                        "Start pomodoro"
+                    } else {
+                        "Stop pomodoro"
+                    },
+                ),
+                (keyboard.add_task, "Add new task"),
+                (keyboard.edit_task, "Edit task"),
+                (keyboard.toggle_done, "Toggle done"),
+                (keyboard.delete_task, "Delete task"),
+                (keyboard.increase_estimate, "Increase estimate"),
+                (keyboard.decrease_estimate, "Decrease estimate"),
+                (keyboard.select_next, "Next task"),
+                (keyboard.select_previous, "Previous task"),
+                (keyboard.quit, "Quit"),
+            ],
+            AppMode::TaskTextInput => vec![
+                (keyboard.confirm_task, "Save task"),
+                (keyboard.cancel_task, "Cancel"),
+            ],
+        };
+        let hotkeys: Vec<Line> = hotkeys
+            .into_iter()
+            .map(|(key, label)| {
+                let style = Style::new().fg(self.config.theme.hotkey);
+                Line::from(Span::styled(format!("{key} - {label}"), style))
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(hotkeys), hotkeys_area);
+    }
+
+    fn handle_events(&mut self) -> io::Result<()> {
+        if !event::poll(Duration::from_millis(100))? {
+            return Ok(());
+        }
+
+        let Event::Key(key) = event::read()? else {
+            return Ok(());
+        };
+        if key.kind != KeyEventKind::Press {
+            return Ok(());
+        }
+
+        let keyboard = &self.config.keyboard;
+        match self.mode {
+            AppMode::Normal => match key.code {
+                code if code == keyboard.quit => self.should_quit = true,
+                code if code == keyboard.toggle_pomodoro => self.action_toggle_pomodoro(),
+                code if code == keyboard.add_task => self.action_start_add_task(),
+                code if code == keyboard.edit_task => self.action_start_edit_task(),
+                code if code == keyboard.toggle_done => self.action_toggle_done(),
+                code if code == keyboard.delete_task => self.action_delete_task(),
+                code if code == keyboard.increase_estimate => self.action_increase_estimate(),
+                code if code == keyboard.decrease_estimate => self.action_decrease_estimate(),
+                code if code == keyboard.select_next => self.action_select_next(),
+                code if code == keyboard.select_previous => self.action_select_previous(),
+                _ => {}
+            },
+            AppMode::TaskTextInput => match key.code {
+                code if code == keyboard.confirm_task => self.action_confirm_task(),
+                code if code == keyboard.cancel_task => self.action_cancel_task(),
+                KeyCode::Backspace => {
+                    self.input_buffer.pop();
+                }
+                KeyCode::Char(c) => self.input_buffer.push(c),
+                _ => {}
+            },
+        }
+        Ok(())
+    }
+
+    fn action_toggle_pomodoro(&mut self) {
+        if self.pomodoro_state == PomodoroState::Idle {
+            self.start_phase(PomodoroState::Work);
+        } else {
+            self.stop_pomodoro();
+        }
+    }
+
+    fn action_select_next(&mut self) {
+        if self.selected_task + 1 < self.tasks.len() {
+            self.selected_task += 1;
+        }
+    }
+
+    fn action_select_previous(&mut self) {
+        self.selected_task = self.selected_task.saturating_sub(1);
+    }
+
+    fn action_delete_task(&mut self) {
+        if self.selected_task < self.tasks.len() {
+            self.tasks.remove(self.selected_task);
+            self.selected_task = self.selected_task.min(self.tasks.len().saturating_sub(1));
+        }
+    }
+
+    fn action_toggle_done(&mut self) {
+        if let Some(task) = self.tasks.get_mut(self.selected_task) {
+            task.done = !task.done;
+        }
+    }
+
+    fn action_increase_estimate(&mut self) {
+        if let Some(task) = self.tasks.get_mut(self.selected_task) {
+            task.estimated_pomodoros += 1;
+        }
+    }
+
+    fn action_decrease_estimate(&mut self) {
+        if let Some(task) = self.tasks.get_mut(self.selected_task) {
+            task.estimated_pomodoros = task.estimated_pomodoros.saturating_sub(1);
+        }
     }
 
     fn action_start_add_task(&mut self) {
-        let (y, x) = ((self.tasks.len() as i32) + 2, 3);
-        self.win.mvaddstr(y, x - 1, "🍅");
-        self.win.mvaddstr(y, x - 1, "TEST");
+        self.input_buffer.clear();
+        self.editing_task = None;
         self.mode = AppMode::TaskTextInput;
-        self.current_task_text = Some(TaskTextInputState {
-            input_buffer: String::new(),
-            y,
-            x,
-        });
     }
-}
 
-fn main() {
-    let win = initscr();
+    fn action_start_edit_task(&mut self) {
+        let Some(task) = self.tasks.get(self.selected_task) else {
+            return;
+        };
+        self.input_buffer = task.text.clone();
+        self.editing_task = Some(self.selected_task);
+        self.mode = AppMode::TaskTextInput;
+    }
 
-    let mut app = App::new(&win);
-    app.initialize();
-
-    loop {
-        if app.tick().is_none() {
-            break;
+    fn action_confirm_task(&mut self) {
+        let text = self.input_buffer.trim();
+        if !text.is_empty() {
+            match self.editing_task {
+                Some(i) => self.tasks[i].text = text.to_string(),
+                None => {
+                    self.tasks.push(Task {
+                        text: text.to_string(),
+                        estimated_pomodoros: 0,
+                        completed_pomodoros: 0,
+                        done: false,
+                    });
+                    self.selected_task = self.tasks.len() - 1;
+                }
+            }
         }
+        self.action_cancel_task();
     }
 
-    app.finish();
+    fn action_cancel_task(&mut self) {
+        self.input_buffer.clear();
+        self.editing_task = None;
+        self.mode = AppMode::Normal;
+    }
 }
 
+/// Renders `MM:SS` as big ASCII art, one `Line` per art row.
+fn clock_lines(duration: Duration) -> Vec<Line<'static>> {
+    let total_seconds = duration.as_secs();
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    let clock_text = format!("{:02}:{:02}", minutes, seconds);
+
+    let width = number_ascii_art::NUMBER_WIDTH as usize;
+    let mut rows: Vec<String> = Vec::new();
+    let mut last_ch = None;
+
+    for ch in clock_text.chars() {
+        let art = match ch {
+            ':' => number_ascii_art::NUMBER_SEPARATOR_ASCII_ART,
+            n => number_ascii_art::NUMBER_ASCII_ART[n.to_digit(10).unwrap() as usize],
+        };
+
+        // Two columns between digits, none next to the separator.
+        let gap = if last_ch.is_some() && last_ch != Some(':') && ch != ':' {
+            "  "
+        } else {
+            ""
+        };
+
+        for (i, line) in art.lines().enumerate() {
+            if rows.len() <= i {
+                rows.push(String::new());
+            }
+            rows[i].push_str(gap);
+            rows[i].push_str(&format!("{:<width$}", line));
+        }
+
+        last_ch = Some(ch);
+    }
+
+    rows.into_iter().map(Line::from).collect()
+}
+
+fn main() -> io::Result<()> {
+    let mut terminal = ratatui::init();
+    let result = App::new(Config::default()).run(&mut terminal);
+    ratatui::restore();
+    result
+}
