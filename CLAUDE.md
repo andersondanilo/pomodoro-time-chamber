@@ -11,11 +11,12 @@ Terminal pomodoro + task list app in Rust (edition 2024), built on `ratatui` (cr
 - `src/number_ascii_art.rs`: big block-digit art for the clock (`NUMBER_ASCII_ART`, `NUMBER_SEPARATOR_ASCII_ART`, `NUMBER_WIDTH`).
 
 ## Architecture
-- `Config { theme: Theme, keyboard: Keyboard, pomodoro: PomodoroConfig }` with hardcoded `Default`s. Planned: load from a file, falling back to these defaults. `PomodoroConfig` holds work/short break/long break minutes (25/5/15) and `long_break_interval` (4). Keep all colors, key bindings and durations in these structs, not as literals elsewhere.
+- `Config { theme: Theme, keyboard: Keyboard, pomodoro: PomodoroConfig }` with hardcoded `Default`s. Planned: load from a file, falling back to these defaults. `PomodoroConfig` holds work/short break/long break minutes (25/5/15), `long_break_interval` (4) and `auto_start_break` (false). Keep all colors, key bindings and durations in these structs, not as literals elsewhere.
 - `App` owns `config`, `mode` (`Normal` / `TaskTextInput`), `input_buffer`, `tasks`. `run` loop: draw, then `handle_events` (100ms poll).
 - UI is immediate-mode: `draw` re-renders everything each frame (no manual redraw/resize handling).
 - Screen: left sidebar (fixed `SIDEBAR_WIDTH` = 40: clock + hotkey hints), right tasks panel (fills the rest).
-- Pomodoro: `PomodoroState` (Idle/Work/ShortBreak/LongBreak) + `phase_ends_at: Option<Instant>`, advanced by `update_pomodoro` each loop iteration. Work -> break (long every `long_break_interval` pomodoros) -> Idle; the user starts each new pomodoro. One key (`toggle_pomodoro`, `s`) starts/stops. Clock shows remaining time (the work duration while idle).
+- Pomodoro: `PomodoroState` (Idle/Work/ShortBreak/LongBreak) + `phase_ends_at: Option<Instant>`, advanced by `update_pomodoro` each loop iteration. Work -> break (long every `long_break_interval` pomodoros; see Breaks) -> Idle; the user starts each new pomodoro. One key (`toggle_pomodoro`, `s`) starts/stops. Clock shows remaining time (the work duration while idle).
+- Breaks: with `auto_start_break` false, a finished work phase leaves the break set up but not running (`awaiting_break_start`, full time in `paused_remaining`, status `(ready)`); `s` starts it (hint "Start break"), and there is no skip key yet. Pause is unavailable while waiting. When true the break starts immediately.
 - Pause: `p` (`pause_pomodoro`) toggles pause while not idle. Pausing stores `paused_remaining` and clears `phase_ends_at`; resuming restores the end time. The hint is only listed when not idle, and the status bar shows `(paused)`.
 - Tasks: `selected_task` is moved with vim keys (`j`/`k`, in `Keyboard`) and highlighted with `theme.selection`. `e` edits the selected task by reusing `TaskTextInput` mode with `editing_task: Some(i)` (`None` = adding). New tasks become selected. Each `Task` has `estimated_pomodoros` (raised with `+`, lowered with `-`) and `completed_pomodoros`; the selected row shows `(completed/estimated)` right-aligned once the estimate is > 0. Tasks have a `done` flag shown as `[x]`/`[ ]` (`x` toggles it). A finished work phase credits the first task that is not done, regardless of the selection, and marks it done once `completed >= estimated` (only when estimated > 0). `d` deletes the selected task immediately (no confirmation, no undo); selection is clamped afterwards.
 - Task list scrolling: `draw_tasks` (which takes `&mut self`) updates `scroll_offset` so the cursor row (selected task, or the new-task input line) stays visible. A `Scrollbar` (`theme.scrollbar`) is drawn in the panel's right padding column only when the list overflows.
@@ -32,7 +33,7 @@ Terminal pomodoro + task list app in Rust (edition 2024), built on `ratatui` (cr
 - Art strings start with a `\n`, so the first row of each digit is blank; `clock_lines` relies on that (6 rows).
 
 ## Status / TODO
-- Timer has no pause, no sound/notification, and breaks don't auto-roll into the next pomodoro.
+- Timer has no sound/notification, and a finished break doesn't auto-roll into the next pomodoro.
 - Config file loading not implemented (`Color`/`KeyCode` would need serde support).
 
 ## Maintenance

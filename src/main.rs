@@ -106,6 +106,8 @@ struct PomodoroConfig {
     long_break_minutes: u64,
     /// A long break replaces the short one after this many pomodoros.
     long_break_interval: u32,
+    /// Start the break automatically when a work phase ends; otherwise wait for the start key.
+    auto_start_break: bool,
 }
 
 impl Default for PomodoroConfig {
@@ -115,6 +117,7 @@ impl Default for PomodoroConfig {
             short_break_minutes: 5,
             long_break_minutes: 15,
             long_break_interval: 4,
+            auto_start_break: false,
         }
     }
 }
@@ -173,6 +176,8 @@ struct App {
     phase_ends_at: Option<Instant>,
     /// Time left in the current phase while paused (`phase_ends_at` is `None` then).
     paused_remaining: Option<Duration>,
+    /// A break is set up (time in `paused_remaining`) but has not been started yet.
+    awaiting_break_start: bool,
     completed_pomodoros: u32,
 }
 
@@ -190,6 +195,7 @@ impl App {
             pomodoro_state: PomodoroState::Idle,
             phase_ends_at: None,
             paused_remaining: None,
+            awaiting_break_start: false,
             completed_pomodoros: 0,
         }
     }
@@ -215,16 +221,27 @@ impl App {
     fn start_phase(&mut self, state: PomodoroState) {
         self.pomodoro_state = state;
         self.phase_ends_at = Some(Instant::now() + self.phase_duration(state));
+        self.paused_remaining = None;
+        self.awaiting_break_start = false;
+    }
+
+    /// Sets up a break without starting its countdown.
+    fn prepare_phase(&mut self, state: PomodoroState) {
+        self.pomodoro_state = state;
+        self.phase_ends_at = None;
+        self.paused_remaining = Some(self.phase_duration(state));
+        self.awaiting_break_start = true;
     }
 
     fn stop_pomodoro(&mut self) {
         self.pomodoro_state = PomodoroState::Idle;
         self.phase_ends_at = None;
         self.paused_remaining = None;
+        self.awaiting_break_start = false;
     }
 
     fn is_paused(&self) -> bool {
-        self.paused_remaining.is_some()
+        self.paused_remaining.is_some() && !self.awaiting_break_start
     }
 
     /// Advances to the next phase once the current one has run out.
@@ -248,10 +265,15 @@ impl App {
                     }
                 }
                 let interval = self.config.pomodoro.long_break_interval.max(1);
-                if self.completed_pomodoros % interval == 0 {
-                    self.start_phase(PomodoroState::LongBreak);
+                let next = if self.completed_pomodoros % interval == 0 {
+                    PomodoroState::LongBreak
                 } else {
-                    self.start_phase(PomodoroState::ShortBreak);
+                    PomodoroState::ShortBreak
+                };
+                if self.config.pomodoro.auto_start_break {
+                    self.start_phase(next);
+                } else {
+                    self.prepare_phase(next);
                 }
             }
             _ => self.stop_pomodoro(),
@@ -423,7 +445,9 @@ impl App {
             .fg(self.config.theme.background)
             .bg(self.status_color());
         frame.render_widget(
-            Paragraph::new(if self.is_paused() {
+            Paragraph::new(if self.awaiting_break_start {
+                format!("{} (ready)", self.pomodoro_state.label())
+            } else if self.is_paused() {
                 format!("{} (paused)", self.pomodoro_state.label())
             } else {
                 self.pomodoro_state.label().to_string()
@@ -441,11 +465,13 @@ impl App {
                     keyboard.toggle_pomodoro,
                     if idle {
                         "Start pomodoro"
+                    } else if self.awaiting_break_start {
+                        "Start break"
                     } else {
                         "Stop pomodoro"
                     },
                 )];
-                if !idle {
+                if !idle && !self.awaiting_break_start {
                     hotkeys.push((
                         keyboard.pause_pomodoro,
                         if self.is_paused() {
@@ -530,6 +556,8 @@ impl App {
     fn action_toggle_pomodoro(&mut self) {
         if self.pomodoro_state == PomodoroState::Idle {
             self.start_phase(PomodoroState::Work);
+        } else if self.awaiting_break_start {
+            self.start_phase(self.pomodoro_state);
         } else {
             self.stop_pomodoro();
         }
@@ -571,7 +599,7 @@ impl App {
     }
 
     fn action_pause_pomodoro(&mut self) {
-        if self.pomodoro_state == PomodoroState::Idle {
+        if self.pomodoro_state == PomodoroState::Idle || self.awaiting_break_start {
             return;
         }
         match self.paused_remaining.take() {
