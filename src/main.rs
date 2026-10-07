@@ -481,27 +481,35 @@ impl App {
         }
         self.scroll_offset = self.scroll_offset.min(lines.len().saturating_sub(height));
 
-        // Highlight the whole row (up to the panel's right padding), not just the text.
-        if !self.tasks.is_empty() && !adding {
-            let row = Rect::new(
+        let row_at = |index: usize| {
+            Rect::new(
                 tasks_area.x,
-                tasks_area.y + (self.selected_task - self.scroll_offset) as u16,
+                tasks_area.y + (index - self.scroll_offset) as u16,
                 tasks_area.width,
                 1,
-            );
+            )
+        };
+
+        // Highlight the whole row (up to the panel's right padding), not just the text.
+        if !self.tasks.is_empty() && !adding {
             frame.render_widget(
                 Block::new().style(Style::new().bg(self.config.theme.selection)),
-                row,
+                row_at(self.selected_task),
             );
+        }
 
-            let task = &self.tasks[self.selected_task];
-            if !editing {
-                let counter = format!(
-                    "({}/{})",
-                    task.completed_pomodoros, task.estimated_pomodoros
-                );
-                frame.render_widget(Paragraph::new(counter).right_aligned(), row);
+        // (completed/estimated) on every visible task, except the one being edited.
+        let visible = self.scroll_offset..(self.scroll_offset + height).min(self.tasks.len());
+        for index in visible {
+            if editing && self.editing_task == Some(index) {
+                continue;
             }
+            let task = &self.tasks[index];
+            let counter = format!(
+                "({}/{})",
+                task.completed_pomodoros, task.estimated_pomodoros
+            );
+            frame.render_widget(Paragraph::new(counter).right_aligned(), row_at(index));
         }
 
         frame.render_widget(
