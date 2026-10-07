@@ -25,6 +25,8 @@ pub struct PluginHost {
     plugins_dir: PathBuf,
     /// Tasks a plugin asked for with `ptc.set_tasks`, not yet applied by the app.
     pending_tasks: Rc<RefCell<Option<Vec<Task>>>>,
+    /// Config patches from `ptc.config`, merged by the app in order.
+    pending_config: Rc<RefCell<Vec<serde_json::Value>>>,
     errors: Rc<RefCell<Vec<String>>>,
 }
 
@@ -33,6 +35,7 @@ impl PluginHost {
     pub fn new(data_dir: &Path, plugins_dir: &Path) -> mlua::Result<Self> {
         let lua = Lua::new();
         let pending_tasks = Rc::new(RefCell::new(None));
+        let pending_config = Rc::new(RefCell::new(Vec::new()));
         let errors = Rc::new(RefCell::new(Vec::new()));
 
         let ptc = lua.create_table()?;
@@ -45,6 +48,19 @@ impl PluginHost {
             lua.create_function(move |lua, value: Value| {
                 let tasks: Vec<Task> = lua.from_value(value)?;
                 *pending.borrow_mut() = Some(tasks);
+                Ok(())
+            })?,
+        )?;
+
+        let patches = Rc::clone(&pending_config);
+        ptc.set(
+            "config",
+            lua.create_function(move |lua, value: Value| {
+                let patch: serde_json::Value = lua.from_value(value)?;
+                if !patch.is_object() {
+                    return Err(mlua::Error::runtime("ptc.config expects a table"));
+                }
+                patches.borrow_mut().push(patch);
                 Ok(())
             })?,
         )?;
@@ -83,6 +99,7 @@ impl PluginHost {
             emit,
             plugins_dir: plugins_dir.to_path_buf(),
             pending_tasks,
+            pending_config,
             errors,
         };
         host.load_source("core.persist", CORE_PERSIST);
@@ -141,11 +158,15 @@ impl PluginHost {
         self.pending_tasks.borrow_mut().take()
     }
 
+    pub fn take_pending_config(&self) -> Vec<serde_json::Value> {
+        std::mem::take(&mut *self.pending_config.borrow_mut())
+    }
+
     pub fn take_errors(&self) -> Vec<String> {
         std::mem::take(&mut *self.errors.borrow_mut())
     }
 
-    fn report(&self, message: String) {
+    pub fn report(&self, message: String) {
         self.errors.borrow_mut().push(message);
     }
 }

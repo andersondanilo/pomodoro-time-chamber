@@ -20,6 +20,8 @@ mod plugins;
 const SIDEBAR_WIDTH: u16 = 40;
 const MIN_ESTIMATED_POMODOROS: u32 = 1;
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Theme {
     /// Background of the whole screen (sidebar).
     background: Color,
@@ -107,10 +109,111 @@ impl std::fmt::Display for KeyBinding {
         if self.modifiers.contains(KeyModifiers::CONTROL) {
             write!(f, "Ctrl+")?;
         }
-        write!(f, "{}", self.code)
+        if self.modifiers.contains(KeyModifiers::ALT) {
+            write!(f, "Alt+")?;
+        }
+        match self.code {
+            KeyCode::Char(' ') => write!(f, "Space"),
+            code => write!(f, "{code}"),
+        }
     }
 }
 
+/// Parses `q`, `Enter`, `Esc`, `Ctrl+j`, `Alt+x`, `F5`, ... (modifiers and names are case-insensitive).
+impl std::str::FromStr for KeyBinding {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, String> {
+        let mut modifiers = KeyModifiers::NONE;
+        let mut rest = text;
+        loop {
+            let prefixes = [
+                ("ctrl+", KeyModifiers::CONTROL),
+                ("alt+", KeyModifiers::ALT),
+                ("shift+", KeyModifiers::SHIFT),
+            ];
+            let found = prefixes.iter().find(|(prefix, _)| {
+                rest.get(..prefix.len())
+                    .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+            });
+            let Some((prefix, modifier)) = found else { break };
+            modifiers |= *modifier;
+            rest = &rest[prefix.len()..];
+        }
+
+        let lower = rest.to_lowercase();
+        let code = match lower.as_str() {
+            "enter" => KeyCode::Enter,
+            "esc" | "escape" => KeyCode::Esc,
+            "tab" => KeyCode::Tab,
+            "backspace" => KeyCode::Backspace,
+            "space" => KeyCode::Char(' '),
+            "up" => KeyCode::Up,
+            "down" => KeyCode::Down,
+            "left" => KeyCode::Left,
+            "right" => KeyCode::Right,
+            "home" => KeyCode::Home,
+            "end" => KeyCode::End,
+            "pageup" => KeyCode::PageUp,
+            "pagedown" => KeyCode::PageDown,
+            "delete" => KeyCode::Delete,
+            "insert" => KeyCode::Insert,
+            other => {
+                let function_key = other
+                    .strip_prefix('f')
+                    .and_then(|n| n.parse::<u8>().ok())
+                    .filter(|n| (1..=24).contains(n));
+                let mut chars = rest.chars();
+                match (function_key, chars.next(), chars.next()) {
+                    (Some(n), _, _) => KeyCode::F(n),
+                    (None, Some(c), None) => KeyCode::Char(c),
+                    _ => return Err(format!("unknown key {text:?}")),
+                }
+            }
+        };
+        Ok(KeyBinding { code, modifiers })
+    }
+}
+
+impl Serialize for KeyBinding {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for KeyBinding {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        text.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+/// Recursively merges `patch` into `base`: objects merge key by key, anything else replaces.
+fn merge_json(base: &mut serde_json::Value, patch: &serde_json::Value) {
+    match (base, patch) {
+        (serde_json::Value::Object(base), serde_json::Value::Object(patch)) => {
+            for (key, value) in patch {
+                match base.get_mut(key) {
+                    Some(existing) => merge_json(existing, value),
+                    None => {
+                        base.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+        (base, patch) => *base = patch.clone(),
+    }
+}
+
+/// Returns `config` with `patch` merged over it; unknown keys and bad values are errors.
+fn merge_config(config: &Config, patch: &serde_json::Value) -> Result<Config, String> {
+    let mut merged = serde_json::to_value(config).map_err(|e| e.to_string())?;
+    merge_json(&mut merged, patch);
+    serde_json::from_value(merged).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Keyboard {
     quit: KeyBinding,
     toggle_pomodoro: KeyBinding,
@@ -157,6 +260,8 @@ impl Default for Keyboard {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PomodoroConfig {
     work_minutes: u64,
     short_break_minutes: u64,
@@ -182,7 +287,8 @@ impl Default for PomodoroConfig {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Config {
     theme: Theme,
     keyboard: Keyboard,
@@ -452,6 +558,7 @@ impl App {
         if let Some(plugins) = &self.plugins {
             plugins.emit_empty("startup");
         }
+        self.apply_plugin_config();
         self.apply_plugin_tasks();
         self.last_tasks = self.tasks.clone();
         self.last_pomodoro = self.pomodoro_snapshot();
@@ -487,8 +594,23 @@ impl App {
         self.last_pomodoro = snapshot;
         self.last_tasks = self.tasks.clone();
         // Replacing the tasks here is not reported back as a change.
+        self.apply_plugin_config();
         self.apply_plugin_tasks();
         self.last_tasks = self.tasks.clone();
+    }
+
+    /// Merges the config patches plugins sent with `ptc.config`. A bad patch is
+    /// reported as a plugin error and ignored as a whole.
+    fn apply_plugin_config(&mut self) {
+        let Some(plugins) = &self.plugins else {
+            return;
+        };
+        for patch in plugins.take_pending_config() {
+            match merge_config(&self.config, &patch) {
+                Ok(config) => self.config = config,
+                Err(err) => plugins.report(format!("ptc.config: {err}")),
+            }
+        }
     }
 
     fn apply_plugin_tasks(&mut self) {
@@ -1097,5 +1219,83 @@ mod tests {
             .eval_for_test(r#"return table.concat(log, ",")"#);
         assert_eq!(log, "startup,idle>work,tasks:1,work>idle");
         assert!(app.plugins.as_ref().unwrap().take_errors().is_empty());
+    }
+
+    fn app_with_plugin(name: &str, source: &str) -> App {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/test-tmp")
+            .join(name);
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let host = PluginHost::new(&dir, &dir).unwrap();
+        host.load_source("test", source);
+        let mut app = App::new(Config::default());
+        app.plugins = Some(host);
+        app.start_plugins();
+        app
+    }
+
+    #[test]
+    fn default_config_survives_a_json_round_trip() {
+        let config = Config::default();
+        let json = serde_json::to_value(&config).unwrap();
+        let again = merge_config(&config, &serde_json::json!({})).unwrap();
+        assert_eq!(json, serde_json::to_value(&again).unwrap());
+    }
+
+    #[test]
+    fn plugins_merge_config_including_theme_and_keys() {
+        let app = app_with_plugin(
+            "config_ok",
+            r##"
+            ptc.config({
+                theme = { background = "#112233", status_work = "magenta" },
+                pomodoro = { work_minutes = 30, auto_start_break = true },
+                keyboard = { quit = "Ctrl+q", add_task = "n" },
+            })
+            ptc.config({ pomodoro = { short_break_minutes = 10 } })
+            "##,
+        );
+        let config = &app.config;
+        assert_eq!(config.theme.background, Color::Rgb(0x11, 0x22, 0x33));
+        assert_eq!(config.theme.status_work, Color::Magenta);
+        // Untouched values keep their defaults.
+        assert_eq!(config.theme.status_short_break, Color::Green);
+        assert_eq!(config.pomodoro.work_minutes, 30);
+        assert_eq!(config.pomodoro.short_break_minutes, 10);
+        assert_eq!(config.pomodoro.long_break_minutes, 15);
+        assert!(config.pomodoro.auto_start_break);
+        assert_eq!(config.keyboard.quit.to_string(), "Ctrl+q");
+        assert_eq!(config.keyboard.add_task.to_string(), "n");
+        assert!(app.plugins.as_ref().unwrap().take_errors().is_empty());
+    }
+
+    #[test]
+    fn bad_config_patches_are_rejected_whole_and_reported() {
+        let app = app_with_plugin(
+            "config_bad",
+            r##"
+            ptc.config({ pomodoro = { work_minutes = 50 }, theme = { background = "not-a-color" } })
+            ptc.config({ theme = { nope = "red" } })
+            ptc.config({ keyboard = { quit = "ctrl+" } })
+            "##,
+        );
+        assert_eq!(app.config.pomodoro.work_minutes, 25);
+        assert_eq!(app.plugins.as_ref().unwrap().take_errors().len(), 3);
+    }
+
+    #[test]
+    fn key_bindings_parse_and_match() {
+        let ctrl_j: KeyBinding = "CTRL+j".parse().unwrap();
+        let event = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL);
+        assert!(ctrl_j.matches(&event));
+        let plain_j: KeyBinding = "j".parse().unwrap();
+        assert!(!plain_j.matches(&event));
+        assert_eq!("Enter".parse::<KeyBinding>().unwrap().code, KeyCode::Enter);
+        assert_eq!("space".parse::<KeyBinding>().unwrap().code, KeyCode::Char(' '));
+        assert_eq!("F5".parse::<KeyBinding>().unwrap().code, KeyCode::F(5));
+        assert_eq!("Ctrl++".parse::<KeyBinding>().unwrap().code, KeyCode::Char('+'));
+        assert!("".parse::<KeyBinding>().is_err());
+        assert!("bogus".parse::<KeyBinding>().is_err());
     }
 }

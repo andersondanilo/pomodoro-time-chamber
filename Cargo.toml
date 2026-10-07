@@ -12,6 +12,6 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 directories = "6.0.0"
 mlua = { version = "0.12.2", features = ["lua54", "vendored", "serialize"] }
 notify-rust = "4.18.2"
-ratatui = "0.30.2"
+ratatui = { version = "0.30.2", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
