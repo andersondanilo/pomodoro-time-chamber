@@ -1,8 +1,10 @@
+use serde::{Deserialize, Serialize};
 use std::{
-    io, thread,
+    fs, io, thread,
     time::{Duration, Instant},
 };
 
+use plugins::PluginHost;
 use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -13,6 +15,7 @@ use ratatui::{
 };
 
 mod number_ascii_art;
+mod plugins;
 
 const SIDEBAR_WIDTH: u16 = 40;
 const MIN_ESTIMATED_POMODOROS: u32 = 1;
@@ -195,6 +198,16 @@ enum PomodoroState {
 }
 
 impl PomodoroState {
+    /// Name used in plugin events.
+    fn name(self) -> &'static str {
+        match self {
+            PomodoroState::Idle => "idle",
+            PomodoroState::Work => "work",
+            PomodoroState::ShortBreak => "short_break",
+            PomodoroState::LongBreak => "long_break",
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             PomodoroState::Idle => "Idle",
@@ -210,16 +223,47 @@ enum AppMode {
     TaskTextInput,
 }
 
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 struct Task {
     text: String,
     /// Always at least `MIN_ESTIMATED_POMODOROS`.
+    #[serde(default = "default_estimate")]
     estimated_pomodoros: u32,
+    #[serde(default)]
     completed_pomodoros: u32,
+    #[serde(default)]
     done: bool,
+}
+
+fn default_estimate() -> u32 {
+    MIN_ESTIMATED_POMODOROS
+}
+
+/// Payload of the `pomodoro_state_changed` plugin event.
+#[derive(Serialize)]
+struct PomodoroEvent {
+    state: &'static str,
+    previous: &'static str,
+    paused: bool,
+    /// A break is set up and waiting for the start key.
+    waiting: bool,
+    completed_pomodoros: u32,
+}
+
+/// What `pomodoro_state_changed` is derived from.
+#[derive(Clone, Copy, PartialEq)]
+struct PomodoroSnapshot {
+    state: PomodoroState,
+    paused: bool,
+    waiting: bool,
 }
 
 struct App {
     config: Config,
+    plugins: Option<PluginHost>,
+    /// Tasks as of the last `tasks_changed` event.
+    last_tasks: Vec<Task>,
+    last_pomodoro: PomodoroSnapshot,
     mode: AppMode,
     input_buffer: String,
     tasks: Vec<Task>,
@@ -243,6 +287,13 @@ impl App {
     fn new(config: Config) -> Self {
         App {
             config,
+            plugins: None,
+            last_tasks: Vec::new(),
+            last_pomodoro: PomodoroSnapshot {
+                state: PomodoroState::Idle,
+                paused: false,
+                waiting: false,
+            },
             mode: AppMode::Normal,
             input_buffer: String::new(),
             tasks: Vec::new(),
@@ -383,8 +434,72 @@ impl App {
             self.update_pomodoro();
             terminal.draw(|frame| self.draw(frame))?;
             self.handle_events()?;
+            self.sync_plugins();
         }
         Ok(())
+    }
+
+    fn pomodoro_snapshot(&self) -> PomodoroSnapshot {
+        PomodoroSnapshot {
+            state: self.pomodoro_state,
+            paused: self.is_paused(),
+            waiting: self.awaiting_break_start,
+        }
+    }
+
+    /// Emits `startup` and loads the tasks plugins provide. No `tasks_changed` for that load.
+    fn start_plugins(&mut self) {
+        if let Some(plugins) = &self.plugins {
+            plugins.emit_empty("startup");
+        }
+        self.apply_plugin_tasks();
+        self.last_tasks = self.tasks.clone();
+        self.last_pomodoro = self.pomodoro_snapshot();
+    }
+
+    fn shutdown_plugins(&mut self) {
+        self.sync_plugins();
+        if let Some(plugins) = &self.plugins {
+            plugins.emit_empty("quit");
+        }
+    }
+
+    /// Emits events for whatever changed since the last call.
+    fn sync_plugins(&mut self) {
+        let snapshot = self.pomodoro_snapshot();
+        if let Some(plugins) = &self.plugins {
+            if snapshot != self.last_pomodoro {
+                plugins.emit(
+                    "pomodoro_state_changed",
+                    &PomodoroEvent {
+                        state: snapshot.state.name(),
+                        previous: self.last_pomodoro.state.name(),
+                        paused: snapshot.paused,
+                        waiting: snapshot.waiting,
+                        completed_pomodoros: self.completed_pomodoros,
+                    },
+                );
+            }
+            if self.tasks != self.last_tasks {
+                plugins.emit("tasks_changed", &self.tasks);
+            }
+        }
+        self.last_pomodoro = snapshot;
+        self.last_tasks = self.tasks.clone();
+        // Replacing the tasks here is not reported back as a change.
+        self.apply_plugin_tasks();
+        self.last_tasks = self.tasks.clone();
+    }
+
+    fn apply_plugin_tasks(&mut self) {
+        let Some(mut tasks) = self.plugins.as_ref().and_then(|p| p.take_pending_tasks()) else {
+            return;
+        };
+        for task in &mut tasks {
+            task.estimated_pomodoros = task.estimated_pomodoros.max(MIN_ESTIMATED_POMODOROS);
+        }
+        self.tasks = tasks;
+        self.clamp_selection();
     }
 
     fn draw(&mut self, frame: &mut Frame) {
@@ -907,8 +1022,80 @@ fn clock_lines(duration: Duration) -> Vec<Line<'static>> {
 }
 
 fn main() -> io::Result<()> {
+    let mut app = App::new(Config::default());
+
+    if let Some(dirs) = directories::ProjectDirs::from("", "", "ptc") {
+        fs::create_dir_all(dirs.data_dir())?;
+        let plugins_dir = dirs.config_dir().join("plugins");
+        match PluginHost::new(dirs.data_dir(), &plugins_dir) {
+            Ok(host) => {
+                host.load_user_plugins();
+                app.plugins = Some(host);
+            }
+            Err(err) => eprintln!("plugins disabled: {err}"),
+        }
+    }
+    app.start_plugins();
+
     let mut terminal = ratatui::init();
-    let result = App::new(Config::default()).run(&mut terminal);
+    let result = app.run(&mut terminal);
+    app.shutdown_plugins();
     ratatui::restore();
+
+    // Plugin errors are only shown now, so they don't garble the TUI.
+    if let Some(plugins) = &app.plugins {
+        for error in plugins.take_errors() {
+            eprintln!("{error}");
+        }
+    }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_emits_plugin_events_on_changes() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/app");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let host = PluginHost::new(&dir, &dir).unwrap();
+        host.load_source(
+            "recorder",
+            r#"
+            log = {}
+            ptc.on("startup", function() table.insert(log, "startup") end)
+            ptc.on("tasks_changed", function(t) table.insert(log, "tasks:" .. #t) end)
+            ptc.on("pomodoro_state_changed", function(e)
+                table.insert(log, e.previous .. ">" .. e.state)
+            end)
+            "#,
+        );
+        let mut app = App::new(Config::default());
+        app.plugins = Some(host);
+        app.start_plugins();
+
+        app.action_toggle_pomodoro();
+        app.sync_plugins();
+        app.tasks.push(Task {
+            text: "a".into(),
+            estimated_pomodoros: 1,
+            completed_pomodoros: 0,
+            done: false,
+        });
+        app.sync_plugins();
+        app.sync_plugins(); // nothing changed: no new events
+        app.action_toggle_pomodoro();
+        app.sync_plugins();
+
+        let log: String = app
+            .plugins
+            .as_ref()
+            .unwrap()
+            .eval_for_test(r#"return table.concat(log, ",")"#);
+        assert_eq!(log, "startup,idle>work,tasks:1,work>idle");
+        assert!(app.plugins.as_ref().unwrap().take_errors().is_empty());
+    }
 }
