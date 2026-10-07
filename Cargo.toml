@@ -8,4 +8,5 @@ name = "ptc"
 path = "src/main.rs"
 
 [dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 ratatui = "0.30.2"

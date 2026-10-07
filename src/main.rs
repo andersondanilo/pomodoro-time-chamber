@@ -37,6 +37,10 @@ struct Theme {
     selection: Color,
     /// Scrollbar of the task list.
     scrollbar: Color,
+    /// Background of the status bar at the bottom of the tasks panel.
+    tasks_status_bar: Color,
+    /// Text color of that status bar.
+    tasks_status_bar_text: Color,
     /// Task marker color when the task is not done (`[ ]`).
     task_unmarked: Color,
     /// Task marker color when the task is done (`[x]`).
@@ -58,6 +62,8 @@ impl Default for Theme {
             status_long_break: Color::Blue,
             selection: Color::Rgb(0x3b, 0x42, 0x61),
             scrollbar: Color::Gray,
+            tasks_status_bar: Color::Rgb(0x2e, 0x33, 0x50),
+            tasks_status_bar_text: Color::Gray,
             task_unmarked: Color::Gray,
             task_marked: Color::Green,
         }
@@ -337,7 +343,60 @@ impl App {
         ])
     }
 
+    /// Time to finish the pomodoros still estimated on open tasks, including the
+    /// breaks between them (the cadence continues from the pomodoros already done).
+    fn estimated_time_left(&self) -> Duration {
+        let pending: u32 = self
+            .tasks
+            .iter()
+            .filter(|task| !task.done)
+            .map(|task| task.estimated_pomodoros.saturating_sub(task.completed_pomodoros))
+            .sum();
+
+        let interval = self.config.pomodoro.long_break_interval.max(1);
+        let mut total = self.phase_duration(PomodoroState::Work) * pending;
+        // A break follows every pomodoro except the last one.
+        for i in 1..pending {
+            let state = if (self.completed_pomodoros + i) % interval == 0 {
+                PomodoroState::LongBreak
+            } else {
+                PomodoroState::ShortBreak
+            };
+            total += self.phase_duration(state);
+        }
+        total
+    }
+
     fn draw_tasks(&mut self, frame: &mut Frame, area: Rect) {
+        let theme = &self.config.theme;
+        let [area, status_area] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
+
+        let minutes = self.estimated_time_left().as_secs() / 60;
+        let estimate = if minutes >= 60 {
+            format!("{}h {:02}m", minutes / 60, minutes % 60)
+        } else {
+            format!("{minutes}m")
+        };
+        let finish_at = (chrono::Local::now() + self.estimated_time_left()).format("%H:%M");
+        frame.render_widget(
+            Paragraph::new(if minutes == 0 {
+                format!("Estimated: {estimate}")
+            } else {
+                format!("Estimated: {estimate} · Finish at {finish_at}")
+            })
+                .right_aligned()
+                .style(
+                    Style::new()
+                        .fg(theme.tasks_status_bar_text)
+                        .bg(theme.tasks_status_bar),
+                ),
+            Block::new().padding(Padding::new(2, 2, 0, 0)).inner(status_area),
+        );
+        frame.render_widget(
+            Block::new().style(Style::new().bg(theme.tasks_status_bar)),
+            status_area,
+        );
         let block = Block::new()
             .style(Style::new().bg(self.config.theme.panel_background))
             .padding(Padding::new(2, 2, 1, 1));
