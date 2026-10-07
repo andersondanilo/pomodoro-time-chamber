@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    fs, io, thread,
-    time::{Duration, Instant},
+    fs, io,
+    path::PathBuf,
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use plugins::PluginHost;
@@ -354,6 +356,11 @@ struct PomodoroEvent {
     /// A break is set up and waiting for the start key.
     waiting: bool,
     completed_pomodoros: u32,
+    /// Unix timestamp (seconds) when the running phase ends; absent unless it is counting down.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ends_at: Option<u64>,
+    /// Time left in the current phase (the full phase length when idle or waiting).
+    remaining_seconds: u64,
 }
 
 /// What `pomodoro_state_changed` is derived from.
@@ -584,6 +591,13 @@ impl App {
                         paused: snapshot.paused,
                         waiting: snapshot.waiting,
                         completed_pomodoros: self.completed_pomodoros,
+                        ends_at: self.phase_ends_at.map(|_| {
+                            let now = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default();
+                            (now + self.remaining()).as_secs_f64().ceil() as u64
+                        }),
+                        remaining_seconds: self.remaining().as_secs_f64().ceil() as u64,
                     },
                 );
             }
@@ -1149,7 +1163,16 @@ fn main() -> io::Result<()> {
     if let Some(dirs) = directories::ProjectDirs::from("", "", "ptc") {
         fs::create_dir_all(dirs.data_dir())?;
         let plugins_dir = dirs.config_dir().join("plugins");
-        match PluginHost::new(dirs.data_dir(), &plugins_dir) {
+        // Read by other programs (e.g. a Neovim statusline), so the path is predictable.
+        let status_file = std::env::var_os("PTC_STATUS_FILE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                let dir = std::env::var_os("XDG_RUNTIME_DIR")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("/tmp"));
+                dir.join("ptc-status.json")
+            });
+        match PluginHost::new(dirs.data_dir(), &plugins_dir, &status_file) {
             Ok(host) => {
                 host.load_user_plugins();
                 app.plugins = Some(host);
@@ -1183,7 +1206,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        let host = PluginHost::new(&dir, &dir).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
         host.load_source(
             "recorder",
             r#"
@@ -1192,6 +1215,9 @@ mod tests {
             ptc.on("tasks_changed", function(t) table.insert(log, "tasks:" .. #t) end)
             ptc.on("pomodoro_state_changed", function(e)
                 table.insert(log, e.previous .. ">" .. e.state)
+                -- Only a counting-down phase has an end timestamp.
+                assert((e.ends_at ~= nil) == (e.state == "work"))
+                assert(e.remaining_seconds > 0)
             end)
             "#,
         );
@@ -1227,7 +1253,7 @@ mod tests {
             .join(name);
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let host = PluginHost::new(&dir, &dir).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
         host.load_source("test", source);
         let mut app = App::new(Config::default());
         app.plugins = Some(host);

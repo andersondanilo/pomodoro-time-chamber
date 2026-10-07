@@ -150,8 +150,8 @@ names with numbers, like `00-config.lua`, to control order). The directory is
 `$XDG_CONFIG_HOME/ptc/plugins` if that variable is set. The path is also available to plugins as
 `ptc.plugins_dir`.
 
-A built-in core plugin (`plugins/core_persist.lua` in this repository) is loaded first. It is a good
-example to read.
+Two built-in core plugins are always loaded first: `plugins/core_persist.lua` (saves tasks) and
+`plugins/core_status_file.lua` (publishes the status file). They are good examples to read.
 
 ### The `ptc` API
 
@@ -164,6 +164,7 @@ example to read.
 | `ptc.json.decode(text)` | JSON string to a Lua value. |
 | `ptc.data_dir` | Directory for plugin data, `~/.local/share/ptc` (created for you). |
 | `ptc.plugins_dir` | Directory plugins are loaded from. |
+| `ptc.status_file` | Path of the status file written by the core plugin (see [Integrations](#integrations)). |
 
 ### Events
 
@@ -189,6 +190,8 @@ The `pomodoro_state_changed` payload:
   paused = false,
   waiting = false,           -- a break is set up and waiting for the start key
   completed_pomodoros = 0,   -- finished pomodoros in this session
+  ends_at = 1790000000,      -- Unix time (seconds) the phase ends; only present while counting down
+  remaining_seconds = 1500,  -- time left (the full phase length when idle or waiting)
 }
 ```
 
@@ -246,6 +249,51 @@ A plugin that fails to load, a handler that raises an error, or a rejected `ptc.
 crashes the app. The messages are collected and printed to stderr **after the app exits**, so they
 don't garble the screen. If something doesn't seem to work, quit and read the output. For handlers,
 the message includes the event name; for load errors, the plugin file name.
+
+## Integrations
+
+### Pomodoro in your Neovim statusline
+
+1. **The status file.** The always-on core plugin `plugins/core_status_file.lua` writes the pomodoro
+   state to `$XDG_RUNTIME_DIR/ptc-status.json` (or `/tmp/ptc-status.json`; set `PTC_STATUS_FILE`
+   before starting ptc to change it) on startup and on every state change, and `{"state":"off"}`
+   when ptc quits. The path is also available to plugins as `ptc.status_file`.
+
+   The file looks like this. While a phase is counting down it has `ends_at`, so readers compute
+   `ends_at - now` themselves and ptc doesn't need to write every second. When paused, waiting or
+   idle, `ends_at` is absent and `remaining_seconds` is used.
+
+   ```json
+   {
+     "state": "work",
+     "paused": false,
+     "waiting": false,
+     "ends_at": 1790000000,
+     "remaining_seconds": 1500,
+     "completed_pomodoros": 2,
+     "updated_at": 1789998500
+   }
+   ```
+
+2. **Show it in Neovim (0.10+).** Copy `contrib/nvim/ptc.lua` to `lua/ptc.lua` in your Neovim
+   config (or symlink it), then:
+
+   ```lua
+   require("ptc").setup()  -- re-reads the file and redraws the statusline every second
+
+   -- plain statusline:
+   vim.o.statusline = "%f %= %{v:lua.require'ptc'.status()}"
+
+   -- or lualine:
+   require("lualine").setup({ sections = { lualine_x = { require("ptc").status } } })
+   ```
+
+   It shows, for example, `🍅 Focus 12:28`, `🍅 Break 03:20 (paused)` or `🍅 Break 05:00 (ready)`,
+   and nothing when ptc is idle or not running (or died: a counting phase more than 5 seconds past
+   its `ends_at` is ignored).
+
+Any other program can read the same file, for example a tmux, polybar or waybar script. If you run
+several ptc instances at once, give each its own `PTC_STATUS_FILE`.
 
 ## Development
 

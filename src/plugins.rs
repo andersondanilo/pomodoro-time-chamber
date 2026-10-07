@@ -17,7 +17,11 @@ use serde::Serialize;
 use crate::Task;
 
 const BOOTSTRAP: &str = include_str!("../plugins/bootstrap.lua");
-const CORE_PERSIST: &str = include_str!("../plugins/core_persist.lua");
+/// Always loaded, in this order, before the user's plugins.
+const CORE_PLUGINS: [(&str, &str); 2] = [
+    ("core.persist", include_str!("../plugins/core_persist.lua")),
+    ("core.status_file", include_str!("../plugins/core_status_file.lua")),
+];
 
 pub struct PluginHost {
     lua: Lua,
@@ -32,7 +36,7 @@ pub struct PluginHost {
 
 impl PluginHost {
     /// Creates the Lua state with the `ptc` API and loads the core plugins.
-    pub fn new(data_dir: &Path, plugins_dir: &Path) -> mlua::Result<Self> {
+    pub fn new(data_dir: &Path, plugins_dir: &Path, status_file: &Path) -> mlua::Result<Self> {
         let lua = Lua::new();
         let pending_tasks = Rc::new(RefCell::new(None));
         let pending_config = Rc::new(RefCell::new(Vec::new()));
@@ -41,6 +45,7 @@ impl PluginHost {
         let ptc = lua.create_table()?;
         ptc.set("data_dir", data_dir.to_string_lossy().into_owned())?;
         ptc.set("plugins_dir", plugins_dir.to_string_lossy().into_owned())?;
+        ptc.set("status_file", status_file.to_string_lossy().into_owned())?;
 
         let pending = Rc::clone(&pending_tasks);
         ptc.set(
@@ -102,7 +107,9 @@ impl PluginHost {
             pending_config,
             errors,
         };
-        host.load_source("core.persist", CORE_PERSIST);
+        for (name, source) in CORE_PLUGINS {
+            host.load_source(name, source);
+        }
         Ok(host)
     }
 
@@ -194,7 +201,7 @@ mod tests {
     #[test]
     fn handlers_receive_events_and_errors_are_collected() {
         let dir = scratch_dir("events");
-        let host = PluginHost::new(&dir, &dir).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
         host.load_source(
             "test",
             r#"
@@ -229,7 +236,7 @@ mod tests {
     #[test]
     fn unknown_events_are_rejected() {
         let dir = scratch_dir("unknown");
-        let host = PluginHost::new(&dir, &dir).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
         host.load_source("test", r#"ptc.on("nope", function() end)"#);
         assert_eq!(host.take_errors().len(), 1);
     }
@@ -238,13 +245,13 @@ mod tests {
     fn core_plugin_persists_tasks_across_hosts() {
         let dir = scratch_dir("persist");
 
-        let host = PluginHost::new(&dir, &dir).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
         host.emit_empty("startup");
         assert!(host.take_pending_tasks().is_none());
         host.emit("tasks_changed", &vec![task("write"), task("test")]);
         assert!(host.take_errors().is_empty(), "{:?}", host.take_errors());
 
-        let host = PluginHost::new(&dir, &dir).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
         host.emit_empty("startup");
         let tasks = host.take_pending_tasks().unwrap();
         assert_eq!(tasks.len(), 2);
@@ -255,12 +262,56 @@ mod tests {
     #[test]
     fn empty_task_list_round_trips() {
         let dir = scratch_dir("empty");
-        let host = PluginHost::new(&dir, &dir).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
         host.emit("tasks_changed", &Vec::<Task>::new());
         assert!(host.take_errors().is_empty(), "{:?}", host.take_errors());
 
-        let host = PluginHost::new(&dir, &dir).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
         host.emit_empty("startup");
         assert_eq!(host.take_pending_tasks().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn status_file_core_plugin_writes_the_status_file() {
+        let dir = scratch_dir("status_file");
+        let file = dir.join("status.json");
+        let host = PluginHost::new(&dir, &dir, &file).unwrap();
+        let read = || -> serde_json::Value {
+            serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap()
+        };
+
+        host.emit_empty("startup");
+        assert_eq!(read()["state"], "idle");
+
+        #[derive(Serialize)]
+        struct Event {
+            state: &'static str,
+            paused: bool,
+            waiting: bool,
+            completed_pomodoros: u32,
+            ends_at: u64,
+            remaining_seconds: u64,
+        }
+        host.emit(
+            "pomodoro_state_changed",
+            &Event {
+                state: "work",
+                paused: false,
+                waiting: false,
+                completed_pomodoros: 2,
+                ends_at: 1_800_000_000,
+                remaining_seconds: 1500,
+            },
+        );
+        let status = read();
+        assert_eq!(status["state"], "work");
+        assert_eq!(status["ends_at"], 1_800_000_000u64);
+        assert_eq!(status["remaining_seconds"], 1500);
+        assert_eq!(status["completed_pomodoros"], 2);
+        assert!(status["updated_at"].is_number());
+
+        host.emit_empty("quit");
+        assert_eq!(read()["state"], "off");
+        assert!(host.take_errors().is_empty(), "{:?}", host.take_errors());
     }
 }
