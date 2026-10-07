@@ -113,6 +113,8 @@ struct Keyboard {
     edit_task: KeyBinding,
     toggle_done: KeyBinding,
     delete_task: KeyBinding,
+    clear_completed: KeyBinding,
+    clear_all: KeyBinding,
     increase_estimate: KeyBinding,
     decrease_estimate: KeyBinding,
     select_next: KeyBinding,
@@ -134,6 +136,8 @@ impl Default for Keyboard {
             edit_task: KeyBinding::plain(KeyCode::Char('e')),
             toggle_done: KeyBinding::plain(KeyCode::Char('x')),
             delete_task: KeyBinding::plain(KeyCode::Char('d')),
+            clear_completed: KeyBinding::plain(KeyCode::Char('c')),
+            clear_all: KeyBinding::plain(KeyCode::Char('C')),
             increase_estimate: KeyBinding::plain(KeyCode::Char('+')),
             decrease_estimate: KeyBinding::plain(KeyCode::Char('-')),
             select_next: KeyBinding::plain(KeyCode::Char('j')),
@@ -594,6 +598,8 @@ impl App {
                     (keyboard.edit_task, "Edit task"),
                     (keyboard.toggle_done, "Toggle done"),
                     (keyboard.delete_task, "Delete task"),
+                    (keyboard.clear_completed, "Clear completed tasks"),
+                    (keyboard.clear_all, "Clear all tasks"),
                     (keyboard.increase_estimate, "Increase estimate"),
                     (keyboard.decrease_estimate, "Decrease estimate"),
                     (keyboard.select_next, "Next task"),
@@ -654,6 +660,8 @@ impl App {
                 _ if keyboard.edit_task.matches(&key) => self.action_start_edit_task(),
                 _ if keyboard.toggle_done.matches(&key) => self.action_toggle_done(),
                 _ if keyboard.delete_task.matches(&key) => self.action_delete_task(),
+                _ if keyboard.clear_completed.matches(&key) => self.action_clear_completed(),
+                _ if keyboard.clear_all.matches(&key) => self.action_clear_all(),
                 _ if keyboard.increase_estimate.matches(&key) => self.action_increase_estimate(),
                 _ if keyboard.decrease_estimate.matches(&key) => self.action_decrease_estimate(),
                 _ if keyboard.select_next.matches(&key) => self.action_select_next(),
@@ -714,8 +722,22 @@ impl App {
     fn action_delete_task(&mut self) {
         if self.selected_task < self.tasks.len() {
             self.tasks.remove(self.selected_task);
-            self.selected_task = self.selected_task.min(self.tasks.len().saturating_sub(1));
+            self.clamp_selection();
         }
+    }
+
+    fn action_clear_completed(&mut self) {
+        self.tasks.retain(|task| !task.done);
+        self.clamp_selection();
+    }
+
+    fn action_clear_all(&mut self) {
+        self.tasks.clear();
+        self.clamp_selection();
+    }
+
+    fn clamp_selection(&mut self) {
+        self.selected_task = self.selected_task.min(self.tasks.len().saturating_sub(1));
     }
 
     fn action_toggle_done(&mut self) {
