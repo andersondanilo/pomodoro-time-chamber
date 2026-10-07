@@ -3,6 +3,8 @@
 A terminal pomodoro timer with a task list, written in Rust with [ratatui](https://ratatui.rs).
 It is scriptable with Lua plugins.
 
+<img width="990" height="714" alt="image" src="https://github.com/user-attachments/assets/ab3a9ab6-1329-4299-b0c5-3fc689f3099d" />
+
 ## Build and run
 
 ```sh
