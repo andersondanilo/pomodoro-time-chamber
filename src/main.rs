@@ -42,16 +42,19 @@ struct Theme {
     tasks_status_bar: Color,
     /// Text color of that status bar.
     tasks_status_bar_text: Color,
-    /// Task marker color when the task is not done (`[ ]`).
+    /// Background of the 3-column marker when the task is not done.
     task_unmarked: Color,
-    /// Task marker color when the task is done (`[x]`).
+    /// Background of the 3-column marker when the task is done.
     task_marked: Color,
+    /// Color of the `x` inside the done marker.
+    task_marked_text: Color,
 }
 
 impl Default for Theme {
     fn default() -> Self {
+        let background = Color::Rgb(0x1a, 0x1b, 0x26);
         Theme {
-            background: Color::Rgb(0x1a, 0x1b, 0x26),
+            background,
             panel_background: Color::Rgb(0x24, 0x28, 0x3b),
             foreground: Color::White,
             title: Color::White,
@@ -65,8 +68,9 @@ impl Default for Theme {
             scrollbar: Color::Gray,
             tasks_status_bar: Color::Rgb(0x2e, 0x33, 0x50),
             tasks_status_bar_text: Color::Gray,
-            task_unmarked: Color::Gray,
+            task_unmarked: background,
             task_marked: Color::Green,
+            task_marked_text: Color::Black,
         }
     }
 }
@@ -373,13 +377,18 @@ impl App {
     /// A task row: the marker in its theme color, then the text.
     fn task_line(&self, done: bool, text: String) -> Line<'static> {
         let theme = &self.config.theme;
-        let (marker, color) = if done {
-            ("[x]", theme.task_marked)
+        // A 3-column colored block; completed ones carry a bold `x` in the middle.
+        let (marker, style) = if done {
+            let style = Style::new()
+                .fg(theme.task_marked_text)
+                .bg(theme.task_marked)
+                .bold();
+            (" x ", style)
         } else {
-            ("[ ]", theme.task_unmarked)
+            ("   ", Style::new().bg(theme.task_unmarked))
         };
         Line::from(vec![
-            Span::styled(marker, Style::new().fg(color)),
+            Span::styled(marker, style),
             Span::raw(format!(" {text}")),
         ])
     }
@@ -498,7 +507,7 @@ impl App {
             );
         }
 
-        // (completed/estimated) on every visible task, except the one being edited.
+        // completed/estimated on every visible task, except the one being edited.
         let visible = self.scroll_offset..(self.scroll_offset + height).min(self.tasks.len());
         for index in visible {
             if editing && self.editing_task == Some(index) {
@@ -506,7 +515,7 @@ impl App {
             }
             let task = &self.tasks[index];
             let counter = format!(
-                "({}/{})",
+                "{}/{}",
                 task.completed_pomodoros, task.estimated_pomodoros
             );
             frame.render_widget(Paragraph::new(counter).right_aligned(), row_at(index));
