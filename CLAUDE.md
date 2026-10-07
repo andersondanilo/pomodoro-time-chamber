@@ -21,7 +21,7 @@ Terminal pomodoro + task list app in Rust (edition 2024), built on `ratatui` (cr
 - Task list scrolling: `draw_tasks` (which takes `&mut self`) updates `scroll_offset` so the cursor row (selected task, or the new-task input line) stays visible. A `Scrollbar` (`theme.scrollbar`) is drawn in the panel's right padding column only when the list overflows.
 - Sidebar top to bottom: title (`POMODORO TIME CHAMBER`, `theme.title`), clock, blank, status bar, blank, hotkey hints.
 - Below the clock, a one-line status bar is colored per state via `theme.status_*`.
-- Hotkey hints in the sidebar are generated from `Keyboard` (`{key} - {label}`), so rebinding updates them.
+- Hotkey hints in the sidebar are generated from `Keyboard` (`{key} → {label}`; the key uses `theme.hotkey_key`, the rest `theme.hotkey`), so rebinding updates them.
 
 ## Conventions / preferences
 - **No color may be hardcoded, not even one.** Every color (including `Color::Red`, `Color::White`, RGB values, etc.) must be a field of `Theme`, with its default defined only in `Theme::default()`. Never write a color literal in drawing code.

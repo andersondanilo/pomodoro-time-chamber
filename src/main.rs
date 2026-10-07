@@ -24,7 +24,10 @@ struct Theme {
     foreground: Color,
     /// App title shown above the clock.
     title: Color,
+    /// Hotkey hint text (arrow and label).
     hotkey: Color,
+    /// The key itself in a hotkey hint.
+    hotkey_key: Color,
     /// Status line background for each pomodoro state.
     status_idle: Color,
     status_work: Color,
@@ -48,6 +51,7 @@ impl Default for Theme {
             foreground: Color::White,
             title: Color::White,
             hotkey: Color::Blue,
+            hotkey_key: Color::Yellow,
             status_idle: Color::DarkGray,
             status_work: Color::Red,
             status_short_break: Color::Green,
@@ -472,8 +476,11 @@ impl App {
         let hotkeys: Vec<Line> = hotkeys
             .into_iter()
             .map(|(key, label)| {
-                let style = Style::new().fg(self.config.theme.hotkey);
-                Line::from(Span::styled(format!("{key} - {label}"), style))
+                let theme = &self.config.theme;
+                Line::from(vec![
+                    Span::styled(key.to_string(), Style::new().fg(theme.hotkey_key)),
+                    Span::styled(format!(" → {label}"), Style::new().fg(theme.hotkey)),
+                ])
             })
             .collect();
         frame.render_widget(Paragraph::new(hotkeys), hotkeys_area);
