@@ -419,24 +419,28 @@ impl App {
         } else {
             format!("{minutes}m")
         };
+        let count = match self.tasks.len() {
+            1 => "1 Task".to_string(),
+            n => format!("{n} Tasks"),
+        };
         let finish_at = (chrono::Local::now() + self.estimated_time_left()).format("%H:%M");
+        let bar_style = Style::new()
+            .fg(theme.tasks_status_bar_text)
+            .bg(theme.tasks_status_bar);
+        let bar_area = Block::new()
+            .padding(Padding::new(2, 2, 0, 0))
+            .inner(status_area);
+        frame.render_widget(Block::new().style(bar_style), status_area);
+        frame.render_widget(Paragraph::new(count).style(bar_style), bar_area);
         frame.render_widget(
             Paragraph::new(if minutes == 0 {
                 format!("Estimated: {estimate}")
             } else {
                 format!("Estimated: {estimate} · Finish at {finish_at}")
             })
-                .right_aligned()
-                .style(
-                    Style::new()
-                        .fg(theme.tasks_status_bar_text)
-                        .bg(theme.tasks_status_bar),
-                ),
-            Block::new().padding(Padding::new(2, 2, 0, 0)).inner(status_area),
-        );
-        frame.render_widget(
-            Block::new().style(Style::new().bg(theme.tasks_status_bar)),
-            status_area,
+            .right_aligned()
+            .style(bar_style),
+            bar_area,
         );
         let block = Block::new()
             .style(Style::new().bg(self.config.theme.panel_background))
