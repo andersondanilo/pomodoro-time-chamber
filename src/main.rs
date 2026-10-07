@@ -1,5 +1,5 @@
 use std::{
-    io,
+    io, thread,
     time::{Duration, Instant},
 };
 
@@ -162,6 +162,8 @@ struct PomodoroConfig {
     long_break_interval: u32,
     /// Start the break automatically when a work phase ends; otherwise wait for the start key.
     auto_start_break: bool,
+    /// Send a desktop notification when a phase ends.
+    notifications: bool,
 }
 
 impl Default for PomodoroConfig {
@@ -172,6 +174,7 @@ impl Default for PomodoroConfig {
             long_break_minutes: 15,
             long_break_interval: 4,
             auto_start_break: false,
+            notifications: true,
         }
     }
 }
@@ -330,14 +333,39 @@ impl App {
                 } else {
                     PomodoroState::ShortBreak
                 };
+                let break_name = next.label().to_lowercase();
                 if self.config.pomodoro.auto_start_break {
                     self.start_phase(next);
+                    self.notify("Pomodoro finished", &format!("Starting a {break_name}"));
                 } else {
                     self.prepare_phase(next);
+                    self.notify(
+                        "Pomodoro finished",
+                        &format!("Time for a {break_name}. Start it when you are ready"),
+                    );
                 }
             }
-            _ => self.stop_pomodoro(),
+            _ => {
+                self.stop_pomodoro();
+                self.notify("Break finished", "Ready for the next pomodoro");
+            }
         }
+    }
+
+    /// Fire-and-forget desktop notification; failures (no daemon, etc.) are ignored.
+    fn notify(&self, summary: &str, body: &str) {
+        if !self.config.pomodoro.notifications {
+            return;
+        }
+        let (summary, body) = (summary.to_string(), body.to_string());
+        // Off the UI thread: talking to the notification daemon can block.
+        thread::spawn(move || {
+            let _ = notify_rust::Notification::new()
+                .appname("ptc")
+                .summary(&summary)
+                .body(&body)
+                .show();
+        });
     }
 
     fn status_color(&self) -> Color {
