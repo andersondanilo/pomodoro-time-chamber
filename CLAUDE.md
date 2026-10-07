@@ -3,7 +3,7 @@
 Terminal pomodoro + task list app in Rust (edition 2024), built on `ratatui` (crossterm backend).
 
 ## Commands
-- `cargo build` / `cargo run`
+- `cargo build` / `cargo run`. The binary is named `ptc` (`[[bin]]` in `Cargo.toml`); the package name stays `pomodoro-time-chamber`.
 - No tests yet.
 
 ## Layout
@@ -25,12 +25,11 @@ Terminal pomodoro + task list app in Rust (edition 2024), built on `ratatui` (cr
 - No borders; sections are separated by different background colors (`theme.background` vs `theme.panel_background`).
 - Panel title is plain `Tasks` (no `|` decorations).
 - Sidebar padding is 3 columns left and right; tasks panel uses its own padding.
-- Task marker is `[ ]` (later `[x]` for completed).
+- Task marker is `[ ]`, or `[x]` when done.
 - Art strings start with a `\n`, so the first row of each digit is blank; `clock_lines` relies on that (6 rows).
 
 ## Status / TODO
 - Timer has no pause, no sound/notification, and breaks don't auto-roll into the next pomodoro.
-- Task completion (`[x]`) not implemented.
 - Config file loading not implemented (`Color`/`KeyCode` would need serde support).
 
 ## Maintenance
