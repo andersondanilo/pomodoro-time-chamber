@@ -291,7 +291,7 @@ impl App {
 
         let [title_area, tasks_area] =
             Layout::vertical([Constraint::Length(2), Constraint::Fill(1)]).areas(inner);
-        frame.render_widget(Paragraph::new("Tasks"), title_area);
+        frame.render_widget(Paragraph::new("TASKS").style(Style::new().bold()), title_area);
 
         let editing = matches!(self.mode, AppMode::TaskTextInput);
         let mut lines: Vec<Line> = self
