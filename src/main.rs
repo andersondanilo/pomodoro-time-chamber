@@ -9,7 +9,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Padding, Paragraph},
+    widgets::{Block, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
 mod number_ascii_art;
@@ -32,6 +32,8 @@ struct Theme {
     status_long_break: Color,
     /// Background of the selected task.
     selection: Color,
+    /// Scrollbar of the task list.
+    scrollbar: Color,
     /// Task marker color when the task is not done (`[ ]`).
     task_unmarked: Color,
     /// Task marker color when the task is done (`[x]`).
@@ -51,6 +53,7 @@ impl Default for Theme {
             status_short_break: Color::Green,
             status_long_break: Color::Blue,
             selection: Color::Rgb(0x3b, 0x42, 0x61),
+            scrollbar: Color::Gray,
             task_unmarked: Color::Gray,
             task_marked: Color::Green,
         }
@@ -156,6 +159,8 @@ struct App {
     input_buffer: String,
     tasks: Vec<Task>,
     selected_task: usize,
+    /// Index of the first task shown in the list; keeps the cursor row visible.
+    scroll_offset: usize,
     /// Index of the task being edited; `None` when adding a new one.
     editing_task: Option<usize>,
     should_quit: bool,
@@ -175,6 +180,7 @@ impl App {
             input_buffer: String::new(),
             tasks: Vec::new(),
             selected_task: 0,
+            scroll_offset: 0,
             editing_task: None,
             should_quit: false,
             pomodoro_state: PomodoroState::Idle,
@@ -267,7 +273,7 @@ impl App {
         Ok(())
     }
 
-    fn draw(&self, frame: &mut Frame) {
+    fn draw(&mut self, frame: &mut Frame) {
         let theme = &self.config.theme;
         frame.render_widget(
             Block::new().style(Style::new().fg(theme.foreground).bg(theme.background)),
@@ -296,7 +302,7 @@ impl App {
         ])
     }
 
-    fn draw_tasks(&self, frame: &mut Frame, area: Rect) {
+    fn draw_tasks(&mut self, frame: &mut Frame, area: Rect) {
         let block = Block::new()
             .style(Style::new().bg(self.config.theme.panel_background))
             .padding(Padding::new(2, 2, 1, 1));
@@ -321,16 +327,26 @@ impl App {
             })
             .collect();
 
-        if editing && self.editing_task.is_none() {
+        let adding = editing && self.editing_task.is_none();
+        if adding {
             lines.push(self.task_line(false, format!("{}█", self.input_buffer)));
         }
 
+        // Scroll just enough to keep the cursor row (selected task or new task) visible.
+        let height = tasks_area.height as usize;
+        let cursor = if adding { self.tasks.len() } else { self.selected_task };
+        if cursor < self.scroll_offset {
+            self.scroll_offset = cursor;
+        } else if height > 0 && cursor >= self.scroll_offset + height {
+            self.scroll_offset = cursor + 1 - height;
+        }
+        self.scroll_offset = self.scroll_offset.min(lines.len().saturating_sub(height));
+
         // Highlight the whole row (up to the panel's right padding), not just the text.
-        let selected_row = self.selected_task as u16;
-        if !self.tasks.is_empty() && selected_row < tasks_area.height {
+        if !self.tasks.is_empty() && !adding {
             let row = Rect::new(
                 tasks_area.x,
-                tasks_area.y + selected_row,
+                tasks_area.y + (self.selected_task - self.scroll_offset) as u16,
                 tasks_area.width,
                 1,
             );
@@ -349,7 +365,27 @@ impl App {
             }
         }
 
-        frame.render_widget(Paragraph::new(lines), tasks_area);
+        frame.render_widget(
+            Paragraph::new(lines).scroll((self.scroll_offset as u16, 0)),
+            tasks_area,
+        );
+
+        // Only when the list overflows; drawn in the panel's right padding column.
+        let total = self.tasks.len() + usize::from(adding);
+        if total > height {
+            let scrollbar_area = Rect::new(tasks_area.right(), tasks_area.y, 1, tasks_area.height);
+            let mut scrollbar_state = ScrollbarState::new(total - height + 1)
+                .viewport_content_length(height)
+                .position(self.scroll_offset);
+            frame.render_stateful_widget(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(None)
+                    .end_symbol(None)
+                    .style(Style::new().fg(self.config.theme.scrollbar)),
+                scrollbar_area,
+                &mut scrollbar_state,
+            );
+        }
     }
 
     fn draw_sidebar(&self, frame: &mut Frame, area: Rect) {
