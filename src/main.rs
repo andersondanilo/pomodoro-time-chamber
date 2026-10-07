@@ -68,6 +68,7 @@ struct Keyboard {
     quit: KeyCode,
     toggle_pomodoro: KeyCode,
     pause_pomodoro: KeyCode,
+    skip_break: KeyCode,
     add_task: KeyCode,
     edit_task: KeyCode,
     toggle_done: KeyCode,
@@ -86,6 +87,7 @@ impl Default for Keyboard {
             quit: KeyCode::Char('q'),
             toggle_pomodoro: KeyCode::Char('s'),
             pause_pomodoro: KeyCode::Char('p'),
+            skip_break: KeyCode::Char('b'),
             add_task: KeyCode::Char('a'),
             edit_task: KeyCode::Char('e'),
             toggle_done: KeyCode::Char('x'),
@@ -238,6 +240,13 @@ impl App {
         self.phase_ends_at = None;
         self.paused_remaining = None;
         self.awaiting_break_start = false;
+    }
+
+    fn in_break(&self) -> bool {
+        matches!(
+            self.pomodoro_state,
+            PomodoroState::ShortBreak | PomodoroState::LongBreak
+        )
     }
 
     fn is_paused(&self) -> bool {
@@ -481,6 +490,9 @@ impl App {
                         },
                     ));
                 }
+                if self.in_break() {
+                    hotkeys.push((keyboard.skip_break, "Skip break"));
+                }
                 hotkeys.extend([
                     (keyboard.add_task, "Add new task"),
                     (keyboard.edit_task, "Edit task"),
@@ -530,6 +542,7 @@ impl App {
                 code if code == keyboard.quit => self.should_quit = true,
                 code if code == keyboard.toggle_pomodoro => self.action_toggle_pomodoro(),
                 code if code == keyboard.pause_pomodoro => self.action_pause_pomodoro(),
+                code if code == keyboard.skip_break => self.action_skip_break(),
                 code if code == keyboard.add_task => self.action_start_add_task(),
                 code if code == keyboard.edit_task => self.action_start_edit_task(),
                 code if code == keyboard.toggle_done => self.action_toggle_done(),
@@ -595,6 +608,12 @@ impl App {
     fn action_decrease_estimate(&mut self) {
         if let Some(task) = self.tasks.get_mut(self.selected_task) {
             task.estimated_pomodoros = task.estimated_pomodoros.saturating_sub(1);
+        }
+    }
+
+    fn action_skip_break(&mut self) {
+        if self.in_break() {
+            self.stop_pomodoro();
         }
     }
 
