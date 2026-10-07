@@ -275,18 +275,86 @@ the message includes the event name; for load errors, the plugin file name.
    }
    ```
 
-2. **Show it in Neovim (0.10+).** Copy `contrib/nvim/ptc.lua` to `lua/ptc.lua` in your Neovim
-   config (or symlink it), then:
+2. **Install the Neovim module (0.10+).** This repository is also a Neovim plugin: the module lives
+   in `contrib/nvim/lua/ptc.lua`, so the plugin manager must add the `contrib/nvim` subdirectory to
+   the runtimepath.
+
+   packer.nvim:
 
    ```lua
-   require("ptc").setup()  -- re-reads the file and redraws the statusline every second
+   use {
+     'andersondanilo/pomodoro-time-chamber',
+     rtp = 'contrib/nvim',
+     config = function() require('ptc').setup() end,
+   }
+   ```
 
+   lazy.nvim:
+
+   ```lua
+   {
+     'andersondanilo/pomodoro-time-chamber',
+     config = function(plugin)
+       vim.opt.rtp:append(plugin.dir .. '/contrib/nvim')
+       require('ptc').setup()
+     end,
+   }
+   ```
+
+   Or copy `contrib/nvim/lua/ptc.lua` to `lua/ptc.lua` in your Neovim config. `setup()` re-reads the
+   file and redraws the statusline every second.
+
+3. **Put it in your statusline.** `require('ptc').status()` returns the text.
+
+   ```lua
    -- plain statusline:
    vim.o.statusline = "%f %= %{v:lua.require'ptc'.status()}"
 
-   -- or lualine:
+   -- lualine:
    require("lualine").setup({ sections = { lualine_x = { require("ptc").status } } })
    ```
+
+   vim-airline (shown before the filetype in the right-hand section):
+
+   ```lua
+   vim.cmd [[
+     function! PtcStatus()
+       return luaeval("require('ptc').status()")
+     endfunction
+     function! PtcAirlineInit()
+       call airline#parts#define_function('ptc', 'PtcStatus')
+       let g:airline_section_x = airline#section#create_right(['ptc', 'filetype'])
+     endfunction
+     autocmd User AirlineAfterInit call PtcAirlineInit()
+   ]]
+   ```
+
+   **Complete example for packer.nvim + vim-airline** (add it inside `packer.startup`, then run
+   `:PackerSync`):
+
+   ```lua
+   use {
+     'andersondanilo/pomodoro-time-chamber',
+     rtp = 'contrib/nvim',  -- the Neovim module lives in a subdirectory of the repo
+     config = function()
+       require('ptc').setup()  -- re-reads the status file and redraws every second
+
+       vim.cmd [[
+         function! PtcStatus()
+           return luaeval("require('ptc').status()")
+         endfunction
+         function! PtcAirlineInit()
+           call airline#parts#define_function('ptc', 'PtcStatus')
+           let g:airline_section_x = airline#section#create_right(['ptc', 'filetype'])
+         endfunction
+         autocmd User AirlineAfterInit call PtcAirlineInit()
+       ]]
+     end,
+   }
+   ```
+
+   This only installs the Neovim module. The `ptc` binary still has to be built and running for the
+   status file to exist.
 
    It shows, for example, `🍅 Focus 12:28`, `🍅 Break 03:20 (paused)` or `🍅 Break 05:00 (ready)`,
    and nothing when ptc is idle or not running (or died: a counting phase more than 5 seconds past

@@ -1,7 +1,8 @@
 -- Neovim module that shows the ptc pomodoro in the statusline.
 -- Reads the status file that ptc always writes (core plugin `core_status_file.lua`, see README).
 --
--- Install: put this file at lua/ptc.lua in your Neovim config, then:
+-- Install: with a plugin manager that adds the `contrib/nvim` subdirectory of this repository
+-- to the runtimepath (see README), or copy this file to lua/ptc.lua in your Neovim config. Then:
 --
 --   require("ptc").setup()
 --
