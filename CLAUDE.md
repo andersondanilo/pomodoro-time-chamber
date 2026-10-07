@@ -27,7 +27,7 @@ Terminal pomodoro + task list app in Rust (edition 2024), built on `ratatui` (cr
 - No borders; sections are separated by different background colors (`theme.background` vs `theme.panel_background`).
 - Panel title is `TASKS`: bold, uppercase, no `|` decorations.
 - Sidebar padding is 3 columns left and right; tasks panel uses its own padding.
-- Task marker is `[ ]`, or `[x]` when done.
+- Task marker is `[ ]` (gray, `theme.task_unmarked`), or `[x]` when done (green, `theme.task_marked`); only the marker is colored, built by `App::task_line`.
 - Art strings start with a `\n`, so the first row of each digit is blank; `clock_lines` relies on that (6 rows).
 
 ## Status / TODO

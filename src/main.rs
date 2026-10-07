@@ -32,6 +32,10 @@ struct Theme {
     status_long_break: Color,
     /// Background of the selected task.
     selection: Color,
+    /// Task marker color when the task is not done (`[ ]`).
+    task_unmarked: Color,
+    /// Task marker color when the task is done (`[x]`).
+    task_marked: Color,
 }
 
 impl Default for Theme {
@@ -47,6 +51,8 @@ impl Default for Theme {
             status_short_break: Color::Green,
             status_long_break: Color::Blue,
             selection: Color::Rgb(0x3b, 0x42, 0x61),
+            task_unmarked: Color::Gray,
+            task_marked: Color::Green,
         }
     }
 }
@@ -142,12 +148,6 @@ struct Task {
     estimated_pomodoros: u32,
     completed_pomodoros: u32,
     done: bool,
-}
-
-impl Task {
-    fn marker(&self) -> &'static str {
-        if self.done { "[x]" } else { "[ ]" }
-    }
 }
 
 struct App {
@@ -282,6 +282,20 @@ impl App {
         self.draw_tasks(frame, right);
     }
 
+    /// A task row: the marker in its theme color, then the text.
+    fn task_line(&self, done: bool, text: String) -> Line<'static> {
+        let theme = &self.config.theme;
+        let (marker, color) = if done {
+            ("[x]", theme.task_marked)
+        } else {
+            ("[ ]", theme.task_unmarked)
+        };
+        Line::from(vec![
+            Span::styled(marker, Style::new().fg(color)),
+            Span::raw(format!(" {text}")),
+        ])
+    }
+
     fn draw_tasks(&self, frame: &mut Frame, area: Rect) {
         let block = Block::new()
             .style(Style::new().bg(self.config.theme.panel_background))
@@ -300,15 +314,15 @@ impl App {
             .enumerate()
             .map(|(i, task)| {
                 if editing && self.editing_task == Some(i) {
-                    Line::from(format!("{} {}█", task.marker(), self.input_buffer))
+                    self.task_line(task.done, format!("{}█", self.input_buffer))
                 } else {
-                    Line::from(format!("{} {}", task.marker(), task.text))
+                    self.task_line(task.done, task.text.clone())
                 }
             })
             .collect();
 
         if editing && self.editing_task.is_none() {
-            lines.push(Line::from(format!("[ ] {}█", self.input_buffer)));
+            lines.push(self.task_line(false, format!("{}█", self.input_buffer)));
         }
 
         // Highlight the whole row (up to the panel's right padding), not just the text.
