@@ -54,6 +54,7 @@ impl Default for Theme {
 struct Keyboard {
     quit: KeyCode,
     toggle_pomodoro: KeyCode,
+    pause_pomodoro: KeyCode,
     add_task: KeyCode,
     edit_task: KeyCode,
     toggle_done: KeyCode,
@@ -71,6 +72,7 @@ impl Default for Keyboard {
         Keyboard {
             quit: KeyCode::Char('q'),
             toggle_pomodoro: KeyCode::Char('s'),
+            pause_pomodoro: KeyCode::Char('p'),
             add_task: KeyCode::Char('a'),
             edit_task: KeyCode::Char('e'),
             toggle_done: KeyCode::Char('x'),
@@ -160,6 +162,8 @@ struct App {
     pomodoro_state: PomodoroState,
     /// When the current phase ends; `None` while idle.
     phase_ends_at: Option<Instant>,
+    /// Time left in the current phase while paused (`phase_ends_at` is `None` then).
+    paused_remaining: Option<Duration>,
     completed_pomodoros: u32,
 }
 
@@ -175,6 +179,7 @@ impl App {
             should_quit: false,
             pomodoro_state: PomodoroState::Idle,
             phase_ends_at: None,
+            paused_remaining: None,
             completed_pomodoros: 0,
         }
     }
@@ -190,9 +195,10 @@ impl App {
     }
 
     fn remaining(&self) -> Duration {
-        match self.phase_ends_at {
-            Some(end) => end.saturating_duration_since(Instant::now()),
-            None => self.phase_duration(PomodoroState::Idle),
+        match (self.phase_ends_at, self.paused_remaining) {
+            (Some(end), _) => end.saturating_duration_since(Instant::now()),
+            (None, Some(remaining)) => remaining,
+            (None, None) => self.phase_duration(PomodoroState::Idle),
         }
     }
 
@@ -204,6 +210,11 @@ impl App {
     fn stop_pomodoro(&mut self) {
         self.pomodoro_state = PomodoroState::Idle;
         self.phase_ends_at = None;
+        self.paused_remaining = None;
+    }
+
+    fn is_paused(&self) -> bool {
+        self.paused_remaining.is_some()
     }
 
     /// Advances to the next phase once the current one has run out.
@@ -263,11 +274,9 @@ impl App {
             frame.area(),
         );
 
-        let [left, right] = Layout::horizontal([
-            Constraint::Length(SIDEBAR_WIDTH),
-            Constraint::Fill(1),
-        ])
-        .areas(frame.area());
+        let [left, right] =
+            Layout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Fill(1)])
+                .areas(frame.area());
 
         self.draw_sidebar(frame, left);
         self.draw_tasks(frame, right);
@@ -305,7 +314,12 @@ impl App {
         // Highlight the whole row (up to the panel's right padding), not just the text.
         let selected_row = self.selected_task as u16;
         if !self.tasks.is_empty() && selected_row < tasks_area.height {
-            let row = Rect::new(tasks_area.x, tasks_area.y + selected_row, tasks_area.width, 1);
+            let row = Rect::new(
+                tasks_area.x,
+                tasks_area.y + selected_row,
+                tasks_area.width,
+                1,
+            );
             frame.render_widget(
                 Block::new().style(Style::new().bg(self.config.theme.selection)),
                 row,
@@ -325,9 +339,7 @@ impl App {
     }
 
     fn draw_sidebar(&self, frame: &mut Frame, area: Rect) {
-        let inner = Block::new()
-            .padding(Padding::new(3, 3, 1, 1))
-            .inner(area);
+        let inner = Block::new().padding(Padding::new(3, 3, 1, 1)).inner(area);
         let [title_area, clock_area, _, status_area, _, hotkeys_area] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(6),
@@ -345,40 +357,63 @@ impl App {
         );
 
         // Round up so the clock shows 00:01 until the last second has passed.
-        let clock = clock_lines(Duration::from_secs(self.remaining().as_secs_f64().ceil() as u64));
-        frame.render_widget(Paragraph::new(clock).style(Style::new().fg(self.status_color())), clock_area);
+        let clock = clock_lines(Duration::from_secs(
+            self.remaining().as_secs_f64().ceil() as u64
+        ));
+        frame.render_widget(
+            Paragraph::new(clock).style(Style::new().fg(self.status_color())),
+            clock_area,
+        );
 
         let status_style = Style::new()
             .fg(self.config.theme.background)
             .bg(self.status_color());
         frame.render_widget(
-            Paragraph::new(self.pomodoro_state.label())
-                .centered()
-                .style(status_style),
+            Paragraph::new(if self.is_paused() {
+                format!("{} (paused)", self.pomodoro_state.label())
+            } else {
+                self.pomodoro_state.label().to_string()
+            })
+            .centered()
+            .style(status_style),
             status_area,
         );
 
         let keyboard = &self.config.keyboard;
         let hotkeys = match self.mode {
-            AppMode::Normal => vec![
-                (
+            AppMode::Normal => {
+                let idle = self.pomodoro_state == PomodoroState::Idle;
+                let mut hotkeys = vec![(
                     keyboard.toggle_pomodoro,
-                    if self.pomodoro_state == PomodoroState::Idle {
+                    if idle {
                         "Start pomodoro"
                     } else {
                         "Stop pomodoro"
                     },
-                ),
-                (keyboard.add_task, "Add new task"),
-                (keyboard.edit_task, "Edit task"),
-                (keyboard.toggle_done, "Toggle done"),
-                (keyboard.delete_task, "Delete task"),
-                (keyboard.increase_estimate, "Increase estimate"),
-                (keyboard.decrease_estimate, "Decrease estimate"),
-                (keyboard.select_next, "Next task"),
-                (keyboard.select_previous, "Previous task"),
-                (keyboard.quit, "Quit"),
-            ],
+                )];
+                if !idle {
+                    hotkeys.push((
+                        keyboard.pause_pomodoro,
+                        if self.is_paused() {
+                            "Resume pomodoro"
+                        } else {
+                            "Pause pomodoro"
+                        },
+                    ));
+                }
+                hotkeys.extend([
+                    (keyboard.add_task, "Add new task"),
+                    (keyboard.edit_task, "Edit task"),
+                    (keyboard.toggle_done, "Toggle done"),
+                    (keyboard.delete_task, "Delete task"),
+                    (keyboard.increase_estimate, "Increase estimate"),
+                    (keyboard.decrease_estimate, "Decrease estimate"),
+                    (keyboard.select_next, "Next task"),
+                    (keyboard.select_previous, "Previous task"),
+                    (keyboard.quit, "Quit"),
+                ]);
+                hotkeys
+            }
             AppMode::TaskTextInput => vec![
                 (keyboard.confirm_task, "Save task"),
                 (keyboard.cancel_task, "Cancel"),
@@ -411,6 +446,7 @@ impl App {
             AppMode::Normal => match key.code {
                 code if code == keyboard.quit => self.should_quit = true,
                 code if code == keyboard.toggle_pomodoro => self.action_toggle_pomodoro(),
+                code if code == keyboard.pause_pomodoro => self.action_pause_pomodoro(),
                 code if code == keyboard.add_task => self.action_start_add_task(),
                 code if code == keyboard.edit_task => self.action_start_edit_task(),
                 code if code == keyboard.toggle_done => self.action_toggle_done(),
@@ -474,6 +510,19 @@ impl App {
     fn action_decrease_estimate(&mut self) {
         if let Some(task) = self.tasks.get_mut(self.selected_task) {
             task.estimated_pomodoros = task.estimated_pomodoros.saturating_sub(1);
+        }
+    }
+
+    fn action_pause_pomodoro(&mut self) {
+        if self.pomodoro_state == PomodoroState::Idle {
+            return;
+        }
+        match self.paused_remaining.take() {
+            Some(remaining) => self.phase_ends_at = Some(Instant::now() + remaining),
+            None => {
+                self.paused_remaining = Some(self.remaining());
+                self.phase_ends_at = None;
+            }
         }
     }
 
