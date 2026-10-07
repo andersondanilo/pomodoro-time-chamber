@@ -5,6 +5,17 @@ It is scriptable with Lua plugins.
 
 <img width="990" height="714" alt="image" src="https://github.com/user-attachments/assets/ab3a9ab6-1329-4299-b0c5-3fc689f3099d" />
 
+## Install
+
+Download the Linux (x86_64) binary from the [latest release](../../releases/latest):
+
+```sh
+tar -xzf ptc-v*-x86_64-linux.tar.gz
+install -m755 ptc-v*-x86_64-linux/ptc ~/.local/bin/ptc
+```
+
+Each release also has a `.sha256` file to verify the download. Or build it yourself (next section).
+
 ## Build and run
 
 ```sh
@@ -362,6 +373,29 @@ the message includes the event name; for load errors, the plugin file name.
 
 Any other program can read the same file, for example a tmux, polybar or waybar script. If you run
 several ptc instances at once, give each its own `PTC_STATUS_FILE`.
+
+## Releases
+
+Releases are automated with [release-please](https://github.com/googleapis/release-please). It reads
+the commit messages on `master`, so they must follow [Conventional Commits](https://www.conventionalcommits.org)
+(`feat: ...`, `fix: ...`, `feat!: ...` for breaking changes; `chore:`/`docs:` don't trigger a release).
+
+1. release-please keeps a "release PR" open that bumps the version in `Cargo.toml` and updates
+   `CHANGELOG.md`.
+2. Merging that PR creates the tag (`vX.Y.Z`) and the GitHub release.
+3. The workflow then builds the Linux binary and attaches `ptc-vX.Y.Z-x86_64-linux.tar.gz` (and its
+   `.sha256`) to the release.
+
+The next version is computed from the commits since the last release: `fix:` bumps the patch
+(`1.0.0` -> `1.0.1`), `feat:` the minor (`1.1.0`) and a breaking change (`feat!:` or a
+`BREAKING CHANGE:` footer) the major (`2.0.0`).
+
+The first release is `1.0.0`. The project started at `0.1.0` with history that is not in
+Conventional Commits, so that version is forced by a commit with a `Release-As: 1.0.0` footer (the
+`chore: release 1.0.0` commit). After it is released, versions follow the rules above.
+
+In the repository settings, "Actions > General > Workflow permissions" must allow GitHub Actions to
+create pull requests.
 
 ## Development
 
