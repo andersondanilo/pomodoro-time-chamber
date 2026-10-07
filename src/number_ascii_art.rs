@@ -70,7 +70,7 @@ pub const NUMBER_ASCII_ART: [&str; 10] = [
 ██████
     ██
 ██████
-"#
+"#,
 ];
 
 pub const NUMBER_SEPARATOR_ASCII_ART: &str = r#"
