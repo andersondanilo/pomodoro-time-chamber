@@ -45,3 +45,4 @@ Terminal pomodoro + task list app in Rust (edition 2024), built on `ratatui` (cr
 
 ## Maintenance
 Update this file whenever architecture, conventions or TODOs change.
+`README.md` documents hotkeys, config options (theme/keyboard/pomodoro tables with defaults), the plugin API and events for users; update it whenever any of those change (new hotkey, theme field, config option, event or `ptc.*` function).

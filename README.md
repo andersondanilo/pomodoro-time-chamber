@@ -1,0 +1,254 @@
+# Pomodoro Time Chamber
+
+A terminal pomodoro timer with a task list, written in Rust with [ratatui](https://ratatui.rs).
+It is scriptable with Lua plugins.
+
+## Build and run
+
+```sh
+cargo build --release
+./target/release/ptc      # or: cargo run
+```
+
+The binary is called `ptc`. Lua 5.4 is compiled into it, so you don't need Lua installed (you do
+need a C compiler to build).
+
+## Default hotkeys
+
+| Key | Action |
+| --- | --- |
+| `s` | Start / stop the pomodoro (also starts a break that is waiting) |
+| `p` | Pause / resume (only while a pomodoro or break is running) |
+| `b` | Skip the break (only during a break) |
+| `a` | Add a task (`Enter` saves, `Esc` cancels) |
+| `e` | Edit the selected task |
+| `x` | Toggle the selected task as done |
+| `d` | Delete the selected task |
+| `c` / `C` | Clear completed tasks / clear all tasks |
+| `+` / `-` | Raise / lower the selected task's estimated pomodoros (minimum 1) |
+| `j` / `k` | Select next / previous task |
+| `Ctrl+j` / `Ctrl+k` | Move the selected task down / up |
+| `q` | Quit |
+
+The hotkey list in the sidebar always shows the keys currently in use, so rebinding a key updates it.
+
+Tasks are saved automatically (see [Persistence](#persistence)).
+
+## Configuration
+
+There is no config file yet. You configure the app from a Lua plugin with `ptc.config`, which
+**merges** a partial table over the defaults. Only the options you set change.
+
+Create a plugin file, for example `~/.config/ptc/plugins/00-config.lua`:
+
+```lua
+ptc.config({
+  theme = {
+    background = "#1e1e2e",
+    status_work = "magenta",
+  },
+  pomodoro = {
+    work_minutes = 50,
+    auto_start_break = true,
+  },
+  keyboard = {
+    quit = "Ctrl+q",
+    add_task = "n",
+  },
+})
+```
+
+You can call `ptc.config` several times; patches are applied in order. If a patch has an unknown
+option or an invalid value (a typo in a color, say), the **whole patch is ignored** and an error
+is printed when the app exits (see [Errors](#errors)).
+
+### Theme
+
+Colors are strings: a name (`"red"`, `"darkgray"`, `"lightblue"`, ...; case, spaces, `-` and `_`
+are ignored), a hex value (`"#112233"`) or a 256-color index (`"208"`).
+
+| Option | Default | What it colors |
+| --- | --- | --- |
+| `background` | `#1a1b26` | Whole screen / left sidebar |
+| `panel_background` | `#24283b` | Tasks panel |
+| `foreground` | `white` | Default text |
+| `title` | `white` | The `POMODORO TIME CHAMBER` title |
+| `hotkey` | `blue` | Arrow and label of a hotkey hint |
+| `hotkey_key` | `yellow` | The key itself in a hotkey hint |
+| `status_idle` | `darkgray` | Status bar and clock while idle |
+| `status_work` | `red` | Status bar and clock while focusing |
+| `status_short_break` | `green` | Status bar and clock in a short break |
+| `status_long_break` | `blue` | Status bar and clock in a long break |
+| `selection` | `#3b4261` | Background of the selected task |
+| `scrollbar` | `gray` | Task list scrollbar |
+| `tasks_status_bar` | `#2e3350` | Background of the bar at the bottom of the tasks panel |
+| `tasks_status_bar_text` | `gray` | Text of that bar |
+| `task_unmarked` | `#1a1b26` | Marker block of an open task |
+| `task_marked` | `green` | Marker block of a done task |
+| `task_marked_text` | `black` | The `x` inside a done marker |
+
+### Keyboard
+
+Keys are strings. Modifiers (`Ctrl+`, `Alt+`, `Shift+`) and names are case-insensitive, but a single
+character is not: `"c"` and `"C"` are different keys.
+
+Supported names: `Enter`, `Esc`, `Tab`, `Backspace`, `Space`, `Up`, `Down`, `Left`, `Right`,
+`Home`, `End`, `PageUp`, `PageDown`, `Delete`, `Insert`, `F1`-`F24`. Examples: `"q"`, `"Ctrl+j"`,
+`"Alt+x"`, `"Enter"`, `"+"`, `"Ctrl++"`.
+
+| Option | Default | Action |
+| --- | --- | --- |
+| `quit` | `q` | Quit |
+| `toggle_pomodoro` | `s` | Start / stop |
+| `pause_pomodoro` | `p` | Pause / resume |
+| `skip_break` | `b` | Skip the break |
+| `add_task` | `a` | Add a task |
+| `edit_task` | `e` | Edit the selected task |
+| `toggle_done` | `x` | Toggle done |
+| `delete_task` | `d` | Delete the selected task |
+| `clear_completed` | `c` | Clear completed tasks |
+| `clear_all` | `C` | Clear all tasks |
+| `increase_estimate` | `+` | More estimated pomodoros |
+| `decrease_estimate` | `-` | Fewer estimated pomodoros |
+| `select_next` | `j` | Select next task |
+| `select_previous` | `k` | Select previous task |
+| `move_task_down` | `Ctrl+j` | Move task down |
+| `move_task_up` | `Ctrl+k` | Move task up |
+| `confirm_task` | `Enter` | Save the task being typed |
+| `cancel_task` | `Esc` | Cancel typing |
+
+Typing text, `Backspace` while typing and the other editing keys are fixed. In a terminal, `Ctrl+j`
+works because the app runs in raw mode, where it is not turned into `Enter`.
+
+### Pomodoro
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `work_minutes` | `25` | Length of a pomodoro (whole number) |
+| `short_break_minutes` | `5` | Length of a short break |
+| `long_break_minutes` | `15` | Length of a long break |
+| `long_break_interval` | `4` | Every Nth pomodoro is followed by a long break |
+| `auto_start_break` | `false` | Start the break by itself; if `false`, it waits for `s` |
+| `notifications` | `true` | Desktop notification when a phase ends |
+
+Numbers must be whole numbers (`30`, not `30.0`).
+
+## Plugins
+
+Plugins are Lua 5.4 scripts that **react to events**. They can read and change configuration and
+replace the task list, but they cannot add hotkeys or UI.
+
+> Plugins are **not sandboxed**. `io`, `os` and the rest of the standard library are available, so a
+> plugin can read and write files and run commands. Only install plugins you trust.
+
+### Where plugins live
+
+Every `*.lua` file in `~/.config/ptc/plugins/` is loaded at startup, in file-name order (prefix
+names with numbers, like `00-config.lua`, to control order). The directory is
+`$XDG_CONFIG_HOME/ptc/plugins` if that variable is set. The path is also available to plugins as
+`ptc.plugins_dir`.
+
+A built-in core plugin (`plugins/core_persist.lua` in this repository) is loaded first. It is a good
+example to read.
+
+### The `ptc` API
+
+| Call | Description |
+| --- | --- |
+| `ptc.on(event, fn)` | Register a handler. An unknown event name is an error. You can register several handlers per event, from several plugins. |
+| `ptc.config(table)` | Merge a partial config (see [Configuration](#configuration)). |
+| `ptc.set_tasks(list)` | Replace the task list. Does not trigger `tasks_changed`. |
+| `ptc.json.encode(value)` | Lua value to a pretty-printed JSON string. |
+| `ptc.json.decode(text)` | JSON string to a Lua value. |
+| `ptc.data_dir` | Directory for plugin data, `~/.local/share/ptc` (created for you). |
+| `ptc.plugins_dir` | Directory plugins are loaded from. |
+
+### Events
+
+| Event | Payload | When |
+| --- | --- | --- |
+| `startup` | none | Once, after all plugins are loaded and before the first draw |
+| `quit` | none | Once, when the app exits |
+| `tasks_changed` | list of tasks | Whenever the task list changes (add, edit, delete, reorder, estimate, done, a pomodoro being credited, ...) |
+| `pomodoro_state_changed` | state table | Whenever the pomodoro starts, stops, pauses, resumes, changes phase, or a break becomes ready |
+
+A task is a table:
+
+```lua
+{ text = "Write the README", estimated_pomodoros = 3, completed_pomodoros = 1, done = false }
+```
+
+The `pomodoro_state_changed` payload:
+
+```lua
+{
+  state = "work",            -- "idle" | "work" | "short_break" | "long_break"
+  previous = "idle",         -- the state before this change
+  paused = false,
+  waiting = false,           -- a break is set up and waiting for the start key
+  completed_pomodoros = 0,   -- finished pomodoros in this session
+}
+```
+
+Notes:
+
+- `tasks_changed` and `pomodoro_state_changed` are not sent for the initial load at startup.
+- Handlers run on the UI thread, so keep them quick. A slow handler freezes the screen.
+- `ptc.set_tasks` and `ptc.config` can be called from a handler (for example from `startup`) and
+  take effect right after it. Tasks loaded this way do not echo back as `tasks_changed`.
+- Estimates below 1 in `ptc.set_tasks` are raised to 1. Missing fields default to
+  `estimated_pomodoros = 1`, `completed_pomodoros = 0` and `done = false`; `text` is required.
+
+### Example: run a command when a break starts
+
+`~/.config/ptc/plugins/10-break-sound.lua`:
+
+```lua
+ptc.on("pomodoro_state_changed", function(e)
+  if e.state == "short_break" or e.state == "long_break" then
+    if not e.waiting and not e.paused then
+      os.execute("paplay /usr/share/sounds/freedesktop/stereo/complete.oga &")
+    end
+  end
+end)
+```
+
+(End the command with `&` so it doesn't block the UI.)
+
+### Example: log finished pomodoros
+
+```lua
+local log_path = ptc.data_dir .. "/pomodoros.log"
+
+ptc.on("pomodoro_state_changed", function(e)
+  if e.previous == "work" and e.state ~= "work" and e.state ~= "idle" then
+    local file = assert(io.open(log_path, "a"))
+    file:write(os.date("%Y-%m-%d %H:%M"), " pomodoro #", e.completed_pomodoros, " finished\n")
+    file:close()
+  end
+end)
+```
+
+### Persistence
+
+The core plugin saves the task list to `~/.local/share/ptc/tasks.json` on every `tasks_changed` (it
+writes a temporary file and renames it, so a crash can't corrupt the list) and loads it on
+`startup`.
+
+If several plugins call `ptc.set_tasks`, the last call wins. A plugin that calls it on `startup` would
+overwrite the saved tasks, so use it with care.
+
+### Errors
+
+A plugin that fails to load, a handler that raises an error, or a rejected `ptc.config` patch never
+crashes the app. The messages are collected and printed to stderr **after the app exits**, so they
+don't garble the screen. If something doesn't seem to work, quit and read the output. For handlers,
+the message includes the event name; for load errors, the plugin file name.
+
+## Development
+
+```sh
+cargo test    # plugin host, config merging and key parsing tests
+```
+
+Architecture notes and project conventions are in [`CLAUDE.md`](CLAUDE.md).
