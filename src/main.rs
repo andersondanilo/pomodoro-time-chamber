@@ -5,7 +5,7 @@ use std::{
 
 use ratatui::{
     DefaultTerminal, Frame,
-    crossterm::event::{self, Event, KeyCode, KeyEventKind},
+    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     layout::{Constraint, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
@@ -70,40 +70,77 @@ impl Default for Theme {
     }
 }
 
+/// A key plus modifiers (e.g. `Ctrl+j`).
+#[derive(Clone, Copy)]
+struct KeyBinding {
+    code: KeyCode,
+    modifiers: KeyModifiers,
+}
+
+impl KeyBinding {
+    fn plain(code: KeyCode) -> Self {
+        KeyBinding { code, modifiers: KeyModifiers::NONE }
+    }
+
+    fn ctrl(code: KeyCode) -> Self {
+        KeyBinding { code, modifiers: KeyModifiers::CONTROL }
+    }
+
+    /// SHIFT is ignored: it is already reflected in the character (`+`, `J`).
+    fn matches(&self, key: &KeyEvent) -> bool {
+        key.code == self.code
+            && key.modifiers.difference(KeyModifiers::SHIFT)
+                == self.modifiers.difference(KeyModifiers::SHIFT)
+    }
+}
+
+impl std::fmt::Display for KeyBinding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.modifiers.contains(KeyModifiers::CONTROL) {
+            write!(f, "Ctrl+")?;
+        }
+        write!(f, "{}", self.code)
+    }
+}
+
 struct Keyboard {
-    quit: KeyCode,
-    toggle_pomodoro: KeyCode,
-    pause_pomodoro: KeyCode,
-    skip_break: KeyCode,
-    add_task: KeyCode,
-    edit_task: KeyCode,
-    toggle_done: KeyCode,
-    delete_task: KeyCode,
-    increase_estimate: KeyCode,
-    decrease_estimate: KeyCode,
-    select_next: KeyCode,
-    select_previous: KeyCode,
-    confirm_task: KeyCode,
-    cancel_task: KeyCode,
+    quit: KeyBinding,
+    toggle_pomodoro: KeyBinding,
+    pause_pomodoro: KeyBinding,
+    skip_break: KeyBinding,
+    add_task: KeyBinding,
+    edit_task: KeyBinding,
+    toggle_done: KeyBinding,
+    delete_task: KeyBinding,
+    increase_estimate: KeyBinding,
+    decrease_estimate: KeyBinding,
+    select_next: KeyBinding,
+    select_previous: KeyBinding,
+    move_task_down: KeyBinding,
+    move_task_up: KeyBinding,
+    confirm_task: KeyBinding,
+    cancel_task: KeyBinding,
 }
 
 impl Default for Keyboard {
     fn default() -> Self {
         Keyboard {
-            quit: KeyCode::Char('q'),
-            toggle_pomodoro: KeyCode::Char('s'),
-            pause_pomodoro: KeyCode::Char('p'),
-            skip_break: KeyCode::Char('b'),
-            add_task: KeyCode::Char('a'),
-            edit_task: KeyCode::Char('e'),
-            toggle_done: KeyCode::Char('x'),
-            delete_task: KeyCode::Char('d'),
-            increase_estimate: KeyCode::Char('+'),
-            decrease_estimate: KeyCode::Char('-'),
-            select_next: KeyCode::Char('j'),
-            select_previous: KeyCode::Char('k'),
-            confirm_task: KeyCode::Enter,
-            cancel_task: KeyCode::Esc,
+            quit: KeyBinding::plain(KeyCode::Char('q')),
+            toggle_pomodoro: KeyBinding::plain(KeyCode::Char('s')),
+            pause_pomodoro: KeyBinding::plain(KeyCode::Char('p')),
+            skip_break: KeyBinding::plain(KeyCode::Char('b')),
+            add_task: KeyBinding::plain(KeyCode::Char('a')),
+            edit_task: KeyBinding::plain(KeyCode::Char('e')),
+            toggle_done: KeyBinding::plain(KeyCode::Char('x')),
+            delete_task: KeyBinding::plain(KeyCode::Char('d')),
+            increase_estimate: KeyBinding::plain(KeyCode::Char('+')),
+            decrease_estimate: KeyBinding::plain(KeyCode::Char('-')),
+            select_next: KeyBinding::plain(KeyCode::Char('j')),
+            select_previous: KeyBinding::plain(KeyCode::Char('k')),
+            move_task_down: KeyBinding::ctrl(KeyCode::Char('j')),
+            move_task_up: KeyBinding::ctrl(KeyCode::Char('k')),
+            confirm_task: KeyBinding::plain(KeyCode::Enter),
+            cancel_task: KeyBinding::plain(KeyCode::Esc),
         }
     }
 }
@@ -561,6 +598,8 @@ impl App {
                     (keyboard.decrease_estimate, "Decrease estimate"),
                     (keyboard.select_next, "Next task"),
                     (keyboard.select_previous, "Previous task"),
+                    (keyboard.move_task_down, "Move task down"),
+                    (keyboard.move_task_up, "Move task up"),
                     (keyboard.quit, "Quit"),
                 ]);
                 hotkeys
@@ -570,12 +609,21 @@ impl App {
                 (keyboard.cancel_task, "Cancel"),
             ],
         };
+        // Pad the keys to the widest one so every label starts at the same column.
+        let key_width = hotkeys
+            .iter()
+            .map(|(key, _)| key.to_string().chars().count())
+            .max()
+            .unwrap_or(0);
         let hotkeys: Vec<Line> = hotkeys
             .into_iter()
             .map(|(key, label)| {
                 let theme = &self.config.theme;
                 Line::from(vec![
-                    Span::styled(key.to_string(), Style::new().fg(theme.hotkey_key)),
+                    Span::styled(
+                        format!("{:<key_width$}", key.to_string()),
+                        Style::new().fg(theme.hotkey_key),
+                    ),
                     Span::styled(format!(" → {label}"), Style::new().fg(theme.hotkey)),
                 ])
             })
@@ -598,27 +646,31 @@ impl App {
         let keyboard = &self.config.keyboard;
         match self.mode {
             AppMode::Normal => match key.code {
-                code if code == keyboard.quit => self.should_quit = true,
-                code if code == keyboard.toggle_pomodoro => self.action_toggle_pomodoro(),
-                code if code == keyboard.pause_pomodoro => self.action_pause_pomodoro(),
-                code if code == keyboard.skip_break => self.action_skip_break(),
-                code if code == keyboard.add_task => self.action_start_add_task(),
-                code if code == keyboard.edit_task => self.action_start_edit_task(),
-                code if code == keyboard.toggle_done => self.action_toggle_done(),
-                code if code == keyboard.delete_task => self.action_delete_task(),
-                code if code == keyboard.increase_estimate => self.action_increase_estimate(),
-                code if code == keyboard.decrease_estimate => self.action_decrease_estimate(),
-                code if code == keyboard.select_next => self.action_select_next(),
-                code if code == keyboard.select_previous => self.action_select_previous(),
+                _ if keyboard.quit.matches(&key) => self.should_quit = true,
+                _ if keyboard.toggle_pomodoro.matches(&key) => self.action_toggle_pomodoro(),
+                _ if keyboard.pause_pomodoro.matches(&key) => self.action_pause_pomodoro(),
+                _ if keyboard.skip_break.matches(&key) => self.action_skip_break(),
+                _ if keyboard.add_task.matches(&key) => self.action_start_add_task(),
+                _ if keyboard.edit_task.matches(&key) => self.action_start_edit_task(),
+                _ if keyboard.toggle_done.matches(&key) => self.action_toggle_done(),
+                _ if keyboard.delete_task.matches(&key) => self.action_delete_task(),
+                _ if keyboard.increase_estimate.matches(&key) => self.action_increase_estimate(),
+                _ if keyboard.decrease_estimate.matches(&key) => self.action_decrease_estimate(),
+                _ if keyboard.select_next.matches(&key) => self.action_select_next(),
+                _ if keyboard.select_previous.matches(&key) => self.action_select_previous(),
+                _ if keyboard.move_task_down.matches(&key) => self.action_move_task_down(),
+                _ if keyboard.move_task_up.matches(&key) => self.action_move_task_up(),
                 _ => {}
             },
             AppMode::TaskTextInput => match key.code {
-                code if code == keyboard.confirm_task => self.action_confirm_task(),
-                code if code == keyboard.cancel_task => self.action_cancel_task(),
+                _ if keyboard.confirm_task.matches(&key) => self.action_confirm_task(),
+                _ if keyboard.cancel_task.matches(&key) => self.action_cancel_task(),
                 KeyCode::Backspace => {
                     self.input_buffer.pop();
                 }
-                KeyCode::Char(c) => self.input_buffer.push(c),
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.input_buffer.push(c)
+                }
                 _ => {}
             },
         }
@@ -638,6 +690,20 @@ impl App {
     fn action_select_next(&mut self) {
         if self.selected_task + 1 < self.tasks.len() {
             self.selected_task += 1;
+        }
+    }
+
+    fn action_move_task_down(&mut self) {
+        if self.selected_task + 1 < self.tasks.len() {
+            self.tasks.swap(self.selected_task, self.selected_task + 1);
+            self.selected_task += 1;
+        }
+    }
+
+    fn action_move_task_up(&mut self) {
+        if self.selected_task > 0 && self.selected_task < self.tasks.len() {
+            self.tasks.swap(self.selected_task, self.selected_task - 1);
+            self.selected_task -= 1;
         }
     }
 
