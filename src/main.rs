@@ -15,6 +15,7 @@ use ratatui::{
 mod number_ascii_art;
 
 const SIDEBAR_WIDTH: u16 = 40;
+const MIN_ESTIMATED_POMODOROS: u32 = 1;
 
 struct Theme {
     /// Background of the whole screen (sidebar).
@@ -200,6 +201,7 @@ enum AppMode {
 
 struct Task {
     text: String,
+    /// Always at least `MIN_ESTIMATED_POMODOROS`.
     estimated_pomodoros: u32,
     completed_pomodoros: u32,
     done: bool,
@@ -310,9 +312,7 @@ impl App {
                 self.completed_pomodoros += 1;
                 if let Some(task) = self.tasks.iter_mut().find(|task| !task.done) {
                     task.completed_pomodoros += 1;
-                    if task.estimated_pomodoros > 0
-                        && task.completed_pomodoros >= task.estimated_pomodoros
-                    {
+                    if task.completed_pomodoros >= task.estimated_pomodoros {
                         task.done = true;
                     }
                 }
@@ -487,7 +487,7 @@ impl App {
             );
 
             let task = &self.tasks[self.selected_task];
-            if !editing && task.estimated_pomodoros > 0 {
+            if !editing {
                 let counter = format!(
                     "({}/{})",
                     task.completed_pomodoros, task.estimated_pomodoros
@@ -732,7 +732,8 @@ impl App {
 
     fn action_decrease_estimate(&mut self) {
         if let Some(task) = self.tasks.get_mut(self.selected_task) {
-            task.estimated_pomodoros = task.estimated_pomodoros.saturating_sub(1);
+            task.estimated_pomodoros =
+                task.estimated_pomodoros.saturating_sub(1).max(MIN_ESTIMATED_POMODOROS);
         }
     }
 
@@ -778,7 +779,7 @@ impl App {
                 None => {
                     self.tasks.push(Task {
                         text: text.to_string(),
-                        estimated_pomodoros: 0,
+                        estimated_pomodoros: MIN_ESTIMATED_POMODOROS,
                         completed_pomodoros: 0,
                         done: false,
                     });
