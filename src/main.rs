@@ -22,6 +22,8 @@ struct Theme {
     /// Background of the tasks panel.
     panel_background: Color,
     foreground: Color,
+    /// App title shown above the clock.
+    title: Color,
     hotkey: Color,
     /// Status line background for each pomodoro state.
     status_idle: Color,
@@ -38,6 +40,7 @@ impl Default for Theme {
             background: Color::Rgb(0x1a, 0x1b, 0x26),
             panel_background: Color::Rgb(0x24, 0x28, 0x3b),
             foreground: Color::White,
+            title: Color::White,
             hotkey: Color::Blue,
             status_idle: Color::DarkGray,
             status_work: Color::Red,
@@ -325,7 +328,8 @@ impl App {
         let inner = Block::new()
             .padding(Padding::new(3, 3, 1, 1))
             .inner(area);
-        let [clock_area, _, status_area, _, hotkeys_area] = Layout::vertical([
+        let [title_area, clock_area, _, status_area, _, hotkeys_area] = Layout::vertical([
+            Constraint::Length(1),
             Constraint::Length(6),
             Constraint::Length(1),
             Constraint::Length(1),
@@ -333,6 +337,12 @@ impl App {
             Constraint::Fill(1),
         ])
         .areas(inner);
+
+        frame.render_widget(
+            Paragraph::new("POMODORO TIME CHAMBER")
+                .style(Style::new().fg(self.config.theme.title).bold()),
+            title_area,
+        );
 
         // Round up so the clock shows 00:01 until the last second has passed.
         let clock = clock_lines(Duration::from_secs(self.remaining().as_secs_f64().ceil() as u64));
