@@ -26,6 +26,9 @@ cargo build --release
 The binary is called `ptc`. Lua 5.4 is compiled into it, so you don't need Lua installed (you do
 need a C compiler to build).
 
+The current task (the first one that is not done) has an animated `✻` before its text. It animates while a
+pomodoro or break is active (running, paused or waiting) and stays still while ptc is idle.
+
 ## Default hotkeys
 
 | Key | Action |
@@ -99,6 +102,7 @@ are ignored), a hex value (`"#112233"`) or a 256-color index (`"208"`).
 | `task_unmarked` | `#1a1b26` | Marker block of an open task |
 | `task_marked` | `green` | Marker block of a done task |
 | `task_marked_text` | `black` | The `x` inside a done marker |
+| `task_spinner` | `#d97757` | The animated `✻` before the current task |
 
 ### Keyboard
 
