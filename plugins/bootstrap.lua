@@ -5,7 +5,8 @@ local EVENTS = {
     startup = true,                -- once, before the first draw; payload: nil
     quit = true,                   -- once, when the app exits; payload: nil
     tasks_changed = true,          -- payload: list of tasks
-    pomodoro_state_changed = true, -- payload: { state, previous, paused, waiting, completed_pomodoros }
+    pomodoro_state_changed = true, -- payload: { state, previous, paused, waiting, completed_pomodoros,
+                                   --   remaining_seconds, ends_at?, current_task?, changed }
 }
 
 local handlers = {}

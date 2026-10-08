@@ -368,14 +368,41 @@ struct PomodoroEvent {
     ends_at: Option<u64>,
     /// Time left in the current phase (the full phase length when idle or waiting).
     remaining_seconds: u64,
+    /// The current task (the first one that is not done); absent when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_task: Option<Task>,
+    /// What differs from the previous event: any of `state`, `paused`, `waiting`, `current_task`.
+    changed: Vec<&'static str>,
 }
 
 /// What `pomodoro_state_changed` is derived from.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 struct PomodoroSnapshot {
     state: PomodoroState,
     paused: bool,
     waiting: bool,
+    /// The first task that is not done, including its current contents.
+    current_task: Option<Task>,
+}
+
+impl PomodoroSnapshot {
+    /// Names of the parts that differ from `previous`.
+    fn changes_from(&self, previous: &PomodoroSnapshot) -> Vec<&'static str> {
+        let mut changed = Vec::new();
+        if self.state != previous.state {
+            changed.push("state");
+        }
+        if self.paused != previous.paused {
+            changed.push("paused");
+        }
+        if self.waiting != previous.waiting {
+            changed.push("waiting");
+        }
+        if self.current_task != previous.current_task {
+            changed.push("current_task");
+        }
+        changed
+    }
 }
 
 struct App {
@@ -417,6 +444,7 @@ impl App {
                 state: PomodoroState::Idle,
                 paused: false,
                 waiting: false,
+                current_task: None,
             },
             mode: AppMode::Normal,
             input_buffer: String::new(),
@@ -582,6 +610,7 @@ impl App {
             state: self.pomodoro_state,
             paused: self.is_paused(),
             waiting: self.awaiting_break_start,
+            current_task: self.tasks.iter().find(|task| !task.done).cloned(),
         }
     }
 
@@ -623,6 +652,8 @@ impl App {
                             (now + self.remaining()).as_secs_f64().ceil() as u64
                         }),
                         remaining_seconds: self.remaining().as_secs_f64().ceil() as u64,
+                        current_task: snapshot.current_task.clone(),
+                        changed: snapshot.changes_from(&self.last_pomodoro),
                     },
                 );
             }
@@ -1295,7 +1326,8 @@ mod tests {
             .as_ref()
             .unwrap()
             .eval_for_test(r#"return table.concat(log, ",")"#);
-        assert_eq!(log, "startup,idle>work,tasks:1,work>idle");
+        // Adding the first task makes it the current one, which is also reported.
+        assert_eq!(log, "startup,idle>work,work>work,tasks:1,work>idle");
         assert!(app.plugins.as_ref().unwrap().take_errors().is_empty());
     }
 
@@ -1484,5 +1516,66 @@ mod tests {
         app.phase_ends_at = Some(Instant::now() - Duration::from_secs(1));
         app.update_pomodoro();
         assert_eq!(app.tasks[0].completed_pomodoros, 1);
+    }
+
+    fn open_task(text: &str) -> Task {
+        Task {
+            text: text.into(),
+            estimated_pomodoros: 2,
+            completed_pomodoros: 0,
+            done: false,
+        }
+    }
+
+    #[test]
+    fn plugins_get_the_current_task_and_are_told_when_it_changes() {
+        let mut app = app_with_plugin(
+            "current_task",
+            r#"
+            log = {}
+            ptc.on("pomodoro_state_changed", function(e)
+                local current = e.current_task and e.current_task.text or "none"
+                table.insert(log, current .. "[" .. table.concat(e.changed, "+") .. "]")
+            end)
+            "#,
+        );
+        let log = |app: &App| -> String {
+            app.plugins.as_ref().unwrap().eval_for_test(r#"return table.concat(log, " ")"#)
+        };
+
+        // No task: no event. Adding "a" makes it current.
+        app.sync_plugins();
+        for text in ["a", "b", "c"] {
+            app.tasks.push(open_task(text));
+            app.sync_plugins();
+        }
+        assert_eq!(log(&app), "a[current_task]");
+
+        // Reordering so that another task comes first changes the current task.
+        app.selected_task = 0;
+        app.action_move_task_down();
+        app.sync_plugins();
+        // Moving a task that is not first leaves the current one alone.
+        app.selected_task = 2;
+        app.action_move_task_up();
+        app.sync_plugins();
+        // Marking the current one done hands over to the next open task.
+        app.selected_task = 0;
+        app.action_toggle_done();
+        app.sync_plugins();
+        // Deleting the current one does too.
+        app.action_delete_task();
+        app.sync_plugins();
+        // Editing the current task's estimate is a change of its data.
+        app.action_increase_estimate();
+        app.sync_plugins();
+        // Clearing everything leaves no current task: the field is absent.
+        app.action_clear_all();
+        app.sync_plugins();
+        assert_eq!(
+            log(&app),
+            "a[current_task] b[current_task] c[current_task] c[current_task] none[current_task]"
+        );
+        assert!(app.plugins.as_ref().unwrap().take_errors().is_empty());
     }
 }

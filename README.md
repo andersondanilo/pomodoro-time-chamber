@@ -195,7 +195,7 @@ Two built-in core plugins are always loaded first: `plugins/core_persist.lua` (s
 | `startup` | none | Once, after all plugins are loaded and before the first draw |
 | `quit` | none | Once, when the app exits |
 | `tasks_changed` | list of tasks | Whenever the task list changes (add, edit, delete, reorder, estimate, done, a pomodoro being credited, ...) |
-| `pomodoro_state_changed` | state table | Whenever the pomodoro starts, stops, pauses, resumes, changes phase, or a break becomes ready |
+| `pomodoro_state_changed` | state table | Whenever the pomodoro starts, stops, pauses, resumes, changes phase, a break becomes ready, or the **current task** changes (see below) |
 
 A task is a table:
 
@@ -214,8 +214,18 @@ The `pomodoro_state_changed` payload:
   completed_pomodoros = 0,   -- finished pomodoros in this session
   ends_at = 1790000000,      -- Unix time (seconds) the phase ends; only present while counting down
   remaining_seconds = 1500,  -- time left (the full phase length when idle or waiting)
+  current_task = { text = "Write the README", estimated_pomodoros = 3,
+                   completed_pomodoros = 1, done = false },  -- absent (nil) when no task is open
+  changed = { "state", "current_task" },  -- what differs from the previous event
 }
 ```
+
+The **current task** is the first task that is not done, the one a finished pomodoro is credited to. The
+event is also sent when it changes: the current task is marked done, deleted, moved, or another task
+becomes the first open one, and also when the current task's own data changes (its text, estimate or
+completed count). In that case `state` and `previous` are the same, so use `changed` to tell why you
+were called. `changed` is a list with any of `"state"`, `"paused"`, `"waiting"` and `"current_task"`.
+When the last open task goes away, `current_task` is absent and `changed` contains `"current_task"`.
 
 Notes:
 
@@ -231,11 +241,20 @@ Notes:
 `~/.config/ptc/plugins/10-break-sound.lua`:
 
 ```lua
+local function has(list, value)
+  for _, item in ipairs(list) do
+    if item == value then return true end
+  end
+  return false
+end
+
 ptc.on("pomodoro_state_changed", function(e)
-  if e.state == "short_break" or e.state == "long_break" then
-    if not e.waiting and not e.paused then
-      os.execute("paplay /usr/share/sounds/freedesktop/stereo/complete.oga &")
-    end
+  local in_break = e.state == "short_break" or e.state == "long_break"
+  -- The break just started: the phase changed, or a waiting break was started (not a resume
+  -- after a pause, and not a change of the current task).
+  local started = has(e.changed, "state") or has(e.changed, "waiting")
+  if in_break and started and not e.waiting and not e.paused then
+    os.execute("paplay /usr/share/sounds/freedesktop/stereo/complete.oga &")
   end
 end)
 ```
@@ -248,6 +267,7 @@ end)
 local log_path = ptc.data_dir .. "/pomodoros.log"
 
 ptc.on("pomodoro_state_changed", function(e)
+  -- `previous` is only different from `state` when the phase changed.
   if e.previous == "work" and e.state ~= "work" and e.state ~= "idle" then
     local file = assert(io.open(log_path, "a"))
     file:write(os.date("%Y-%m-%d %H:%M"), " pomodoro #", e.completed_pomodoros, " finished\n")
