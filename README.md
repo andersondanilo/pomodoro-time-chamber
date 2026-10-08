@@ -5,6 +5,16 @@ It is scriptable with Lua plugins.
 
 <img width="990" height="714" alt="image" src="https://github.com/user-attachments/assets/ab3a9ab6-1329-4299-b0c5-3fc689f3099d" />
 
+## Why This Pomodoro App?
+
+This Pomodoro app is inspired by Pomodoro Tracker, but it introduces a few features designed to make time estimation and productivity tracking more meaningful.
+
+One of its key features is estimated Pomodoros. You can estimate how many Pomodoros a task will take and use that estimate to predict when you’ll finish your tasks. Once you complete a task, you can also compare the estimated Pomodoros with the actual time spent. Over time, this helps you improve your ability to estimate how long your work will take.
+
+The app is also extensible with Lua, allowing you to create custom plugins and integrate it with your existing workflow and tools such as Neovim, tmux, and more.
+
+The goal is not just to track time, but to help you plan, measure, and continuously improve your ability to manage it.
+
 ## Install
 
 Download the Linux (x86_64) binary from the [latest release](../../releases/latest):
