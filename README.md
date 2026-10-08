@@ -38,13 +38,19 @@ pomodoro or break is active (running, paused or waiting) and stays still while p
 | `b` | Skip the break (only during a break) |
 | `a` | Add a task (`Enter` saves, `Esc` cancels) |
 | `e` | Edit the selected task |
-| `x` | Toggle the selected task as done |
+| `x` | Toggle the selected task as done (see below for pomodoro credit) |
 | `d` | Delete the selected task |
 | `c` / `C` | Clear completed tasks / clear all tasks |
 | `+` / `-` | Raise / lower the selected task's estimated pomodoros (minimum 1) |
 | `j` / `k` | Select next / previous task |
 | `Ctrl+j` / `Ctrl+k` | Move the selected task down / up |
 | `q` | Quit |
+
+**How pomodoros are counted.** When a work phase ends, the first task that is not done gets one completed
+pomodoro. If you mark a task as done with `x` while a work phase is running (or paused) and **more than
+half of it has passed**, that pomodoro is credited to the task you marked instead (+1 completed), and
+the end of the phase then credits nobody else. This happens once per work phase. Marking a task done in
+the first half, while idle, or during a break credits nothing.
 
 The hotkey list in the sidebar always shows the keys currently in use, so rebinding a key updates it.
 

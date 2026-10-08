@@ -401,6 +401,9 @@ struct App {
     paused_remaining: Option<Duration>,
     /// A break is set up (time in `paused_remaining`) but has not been started yet.
     awaiting_break_start: bool,
+    /// The running work phase was already credited to a task (when it was marked done past
+    /// half of the phase), so finishing it must not credit another task.
+    work_credited: bool,
     completed_pomodoros: u32,
 }
 
@@ -427,6 +430,7 @@ impl App {
             phase_ends_at: None,
             paused_remaining: None,
             awaiting_break_start: false,
+            work_credited: false,
             completed_pomodoros: 0,
         }
     }
@@ -454,6 +458,7 @@ impl App {
         self.phase_ends_at = Some(Instant::now() + self.phase_duration(state));
         self.paused_remaining = None;
         self.awaiting_break_start = false;
+        self.work_credited = false;
     }
 
     /// Sets up a break without starting its countdown.
@@ -462,6 +467,7 @@ impl App {
         self.phase_ends_at = None;
         self.paused_remaining = Some(self.phase_duration(state));
         self.awaiting_break_start = true;
+        self.work_credited = false;
     }
 
     fn stop_pomodoro(&mut self) {
@@ -469,6 +475,13 @@ impl App {
         self.phase_ends_at = None;
         self.paused_remaining = None;
         self.awaiting_break_start = false;
+        self.work_credited = false;
+    }
+
+    /// A work phase is running (or paused) and more than half of it has passed.
+    fn work_past_half(&self) -> bool {
+        self.pomodoro_state == PomodoroState::Work
+            && self.remaining() < self.phase_duration(PomodoroState::Work) / 2
     }
 
     fn in_break(&self) -> bool {
@@ -495,7 +508,9 @@ impl App {
             PomodoroState::Work => {
                 self.completed_pomodoros += 1;
                 let auto_complete = self.config.pomodoro.auto_complete_tasks;
-                if let Some(task) = self.tasks.iter_mut().find(|task| !task.done) {
+                let already_credited = self.work_credited;
+                let first_open = self.tasks.iter_mut().find(|task| !task.done);
+                if let Some(task) = first_open.filter(|_| !already_credited) {
                     task.completed_pomodoros += 1;
                     if auto_complete && task.completed_pomodoros >= task.estimated_pomodoros {
                         task.done = true;
@@ -1069,9 +1084,17 @@ impl App {
         self.selected_task = self.selected_task.min(self.tasks.len().saturating_sub(1));
     }
 
+    /// Marking a task done once more than half of the running work phase has passed credits that
+    /// pomodoro to it (and only once: the end of the phase then credits nobody).
     fn action_toggle_done(&mut self) {
-        if let Some(task) = self.tasks.get_mut(self.selected_task) {
-            task.done = !task.done;
+        let credit = self.work_past_half() && !self.work_credited;
+        let Some(task) = self.tasks.get_mut(self.selected_task) else {
+            return;
+        };
+        task.done = !task.done;
+        if task.done && credit {
+            task.completed_pomodoros += 1;
+            self.work_credited = true;
         }
     }
 
@@ -1397,5 +1420,69 @@ mod tests {
         // Done tasks are not credited any more.
         finish_pomodoro(&mut app);
         assert_eq!(app.tasks[0].completed_pomodoros, 2);
+    }
+
+    fn app_with_two_tasks() -> App {
+        let mut config = Config::default();
+        config.pomodoro.notifications = false;
+        let mut app = App::new(config);
+        for text in ["a", "b"] {
+            app.tasks.push(Task {
+                text: text.into(),
+                estimated_pomodoros: 3,
+                completed_pomodoros: 0,
+                done: false,
+            });
+        }
+        app
+    }
+
+    /// Starts a work phase with `seconds_left` on the clock.
+    fn start_work_with(app: &mut App, seconds_left: u64) {
+        app.action_toggle_pomodoro();
+        app.phase_ends_at = Some(Instant::now() + Duration::from_secs(seconds_left));
+    }
+
+    #[test]
+    fn marking_done_after_half_of_the_work_credits_a_pomodoro_once() {
+        let mut app = app_with_two_tasks();
+        start_work_with(&mut app, 10 * 60); // 15 of 25 minutes passed
+        app.action_toggle_done();
+        assert!(app.tasks[0].done);
+        assert_eq!(app.tasks[0].completed_pomodoros, 1);
+
+        // Unmarking and marking again must not credit the same pomodoro twice.
+        app.action_toggle_done();
+        app.action_toggle_done();
+        assert_eq!(app.tasks[0].completed_pomodoros, 1);
+
+        // Finishing the phase credits nobody else: it was already counted.
+        app.phase_ends_at = Some(Instant::now() - Duration::from_secs(1));
+        app.update_pomodoro();
+        assert_eq!(app.completed_pomodoros, 1);
+        assert_eq!(app.tasks[1].completed_pomodoros, 0);
+        assert_eq!(app.tasks[0].completed_pomodoros, 1);
+    }
+
+    #[test]
+    fn marking_done_in_the_first_half_or_outside_work_credits_nothing() {
+        let mut app = app_with_two_tasks();
+        start_work_with(&mut app, 20 * 60); // only 5 of 25 minutes passed
+        app.action_toggle_done();
+        assert!(app.tasks[0].done);
+        assert_eq!(app.tasks[0].completed_pomodoros, 0);
+
+        // Unmarking never credits.
+        app.stop_pomodoro();
+        app.selected_task = 1;
+        app.action_toggle_done(); // idle: no work phase running
+        assert_eq!(app.tasks[1].completed_pomodoros, 0);
+
+        // A phase that is not credited still credits the first open task when it ends.
+        let mut app = app_with_two_tasks();
+        start_work_with(&mut app, 20 * 60);
+        app.phase_ends_at = Some(Instant::now() - Duration::from_secs(1));
+        app.update_pomodoro();
+        assert_eq!(app.tasks[0].completed_pomodoros, 1);
     }
 }
