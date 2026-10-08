@@ -21,6 +21,10 @@ jobs:
       - id: release
         uses: googleapis/release-please-action@v4
         with:
+          # A personal access token instead of GITHUB_TOKEN: no need to enable "Allow GitHub
+          # Actions to create and approve pull requests", and the release PR triggers other
+          # workflows. See README > Releases for how to create the secret.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 

@@ -394,8 +394,23 @@ The first release is `1.0.0`. The project started at `0.1.0` with history that i
 Conventional Commits, so that version is forced by a commit with a `Release-As: 1.0.0` footer (the
 `chore: release 1.0.0` commit). After it is released, versions follow the rules above.
 
-In the repository settings, "Actions > General > Workflow permissions" must allow GitHub Actions to
-create pull requests.
+### One-time setup: the `RELEASE_PLEASE_TOKEN` secret
+
+release-please authenticates with a personal access token stored as the repository secret
+`RELEASE_PLEASE_TOKEN` (it replaces the default token, so you don't have to enable "Allow GitHub
+Actions to create and approve pull requests").
+
+1. Create a fine-grained token: GitHub > Settings > Developer settings > Personal access tokens >
+   Fine-grained tokens > Generate new token.
+   - Repository access: **Only select repositories** > this repository.
+   - Repository permissions: **Contents** (read and write), **Pull requests** (read and write) and
+     **Issues** (read and write; release-please uses labels). Metadata (read) is added automatically.
+   - Pick an expiration and set a reminder to renew it, because releases stop working when it expires.
+2. Add it as a secret: repository Settings > Secrets and variables > Actions > New repository secret,
+   name `RELEASE_PLEASE_TOKEN`, value the token. Or with the GitHub CLI: `gh secret set RELEASE_PLEASE_TOKEN`.
+3. Re-run the latest "Release" workflow (Actions tab), or push a commit to `master`.
+
+A classic token with the `repo` scope also works.
 
 ## Development
 

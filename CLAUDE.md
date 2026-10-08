@@ -45,7 +45,7 @@ Terminal pomodoro + task list app in Rust (edition 2024), built on `ratatui` (cr
 - Config file loading not implemented (`Color`/`KeyCode` would need serde support).
 
 ## Releases / commits
-- Releases use release-please (`.github/workflows/release.yml`, `release-please-config.json`, `.release-please-manifest.json`): it opens a release PR from commits on `master`; merging it tags `vX.Y.Z` and the same workflow attaches the Linux binary (`ptc-vX.Y.Z-x86_64-linux.tar.gz`). Never edit the version in `Cargo.toml` by hand.
+- Releases use release-please (`.github/workflows/release.yml`, `release-please-config.json`, `.release-please-manifest.json`): it opens a release PR from commits on `master`; merging it tags `vX.Y.Z` and the same workflow attaches the Linux binary (`ptc-vX.Y.Z-x86_64-linux.tar.gz`). Never edit the version in `Cargo.toml` by hand. The release-please step authenticates with the `RELEASE_PLEASE_TOKEN` repository secret (a PAT), not `GITHUB_TOKEN`; the setup steps are in the README.
 - **Commit messages must be Conventional Commits** (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `feat!:` for breaking), otherwise release-please ignores them. Earlier history is not in that format. The version is computed from them (fix = patch, feat = minor, `!`/`BREAKING CHANGE` = major). The first release is forced to 1.0.0 by the `chore: release 1.0.0` commit with a `Release-As: 1.0.0` footer; do not add `Release-As` again unless deliberately forcing a version. **Always write commit messages in this format.**
 
 ## Maintenance
