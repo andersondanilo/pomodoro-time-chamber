@@ -63,26 +63,7 @@ jobs:
   publish-aur:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
-    runs-on: ubuntu-latest
-    env:
-      TAG: ${{ needs.release-please.outputs.tag_name }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
-
-      - name: Set the released version in the PKGBUILD
-        run: sed -i "s/^pkgver=.*/pkgver=${TAG#v}/; s/^pkgrel=.*/pkgrel=1/" aur/PKGBUILD
-
-      # Refreshes the checksum, test-builds the package in an Arch container, regenerates
-      # .SRCINFO and pushes PKGBUILD + .SRCINFO to the AUR.
-      - uses: KSXGitHub/github-actions-deploy-aur@v4.2.0
-        with:
-          pkgname: pomodoro-time-chamber
-          pkgbuild: ./aur/PKGBUILD
-          updpkgsums: true
-          test: true
-          commit_username: andersondanilo
-          commit_email: andersondanilo@users.noreply.github.com
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: Update to ${{ env.TAG }}
+    uses: ./.github/workflows/aur.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    secrets: inherit

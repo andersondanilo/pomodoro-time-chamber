@@ -430,8 +430,11 @@ package `pomodoro-time-chamber` using an SSH key stored as the secret `AUR_SSH_P
 4. Add the **private** key as a repository secret: `gh secret set AUR_SSH_PRIVATE_KEY < ~/.ssh/aur_ptc`
    (or Settings > Secrets and variables > Actions > New repository secret).
 5. The package does not need to exist beforehand: the first push to `pomodoro-time-chamber` on the AUR
-   creates it. If you add the secret after a release was already published, re-run the "Release"
-   workflow, or use the `ssh://aur@aur.archlinux.org/pomodoro-time-chamber.git` repository by hand.
+   creates it.
+
+Until `AUR_SSH_PRIVATE_KEY` exists the AUR job is skipped (a notice in the run log), and the rest of
+the release is unaffected. To publish a release that already happened, run **Actions > Publish AUR
+package > Run workflow** and enter its tag (e.g. `v1.0.0`).
 
 To test the PKGBUILD locally, build from a tarball of your checkout (the PKGBUILD downloads the
 `vX.Y.Z` tag, which only exists after a release). The package needs `options=('!lto')`:
