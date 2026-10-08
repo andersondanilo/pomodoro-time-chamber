@@ -40,10 +40,9 @@ jobs:
             echo "::notice::AUR_SSH_PRIVATE_KEY is not set, skipping the AUR publication of $TAG."
           fi
 
+      # The PKGBUILD comes from the branch the workflow runs on; it downloads the tag's source itself.
       - uses: actions/checkout@v4
         if: steps.key.outputs.present == 'true'
-        with:
-          ref: ${{ inputs.tag }}
 
       - name: Set the released version in the PKGBUILD
         if: steps.key.outputs.present == 'true'
