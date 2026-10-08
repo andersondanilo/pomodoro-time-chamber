@@ -55,6 +55,8 @@ struct Theme {
     task_marked: Color,
     /// Color of the `x` inside the done marker.
     task_marked_text: Color,
+    /// The animated `✻` before the current task.
+    task_spinner: Color,
 }
 
 impl Default for Theme {
@@ -78,6 +80,7 @@ impl Default for Theme {
             task_unmarked: background,
             task_marked: Color::Green,
             task_marked_text: Color::Black,
+            task_spinner: Color::Rgb(0xd9, 0x77, 0x57),
         }
     }
 }
@@ -383,6 +386,7 @@ struct App {
     selected_task: usize,
     /// Index of the first task shown in the list; keeps the cursor row visible.
     scroll_offset: usize,
+    started_at: Instant,
     /// Index of the task being edited; `None` when adding a new one.
     editing_task: Option<usize>,
     should_quit: bool,
@@ -412,6 +416,7 @@ impl App {
             tasks: Vec::new(),
             selected_task: 0,
             scroll_offset: 0,
+            started_at: Instant::now(),
             editing_task: None,
             should_quit: false,
             pomodoro_state: PomodoroState::Idle,
@@ -653,8 +658,19 @@ impl App {
         self.draw_tasks(frame, right);
     }
 
-    /// A task row: the marker in its theme color, then the text.
-    fn task_line(&self, done: bool, text: String) -> Line<'static> {
+    /// Animated `✻` (like Claude Code's spinner), still while the pomodoro is idle.
+    fn spinner_frame(&self) -> &'static str {
+        const FRAMES: [&str; 10] = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
+        if self.pomodoro_state == PomodoroState::Idle {
+            return "✻";
+        }
+        let step = self.started_at.elapsed().as_millis() / 120;
+        FRAMES[step as usize % FRAMES.len()]
+    }
+
+    /// A task row: the marker in its theme color, the spinner slot (the glyph on the
+    /// current task, blank on the others so the texts stay aligned), then the text.
+    fn task_line(&self, done: bool, text: String, spinner: Option<&'static str>) -> Line<'static> {
         let theme = &self.config.theme;
         // A 3-column colored block; completed ones carry a bold `x` in the middle.
         let (marker, style) = if done {
@@ -668,6 +684,11 @@ impl App {
         };
         Line::from(vec![
             Span::styled(marker, style),
+            Span::raw(" "),
+            Span::styled(
+                spinner.unwrap_or(" "),
+                Style::new().fg(theme.task_spinner),
+            ),
             Span::raw(format!(" {text}")),
         ])
     }
@@ -741,22 +762,25 @@ impl App {
         frame.render_widget(Paragraph::new("TASKS").style(Style::new().bold()), title_area);
 
         let editing = matches!(self.mode, AppMode::TaskTextInput);
+        // The current task is the first one that is not done.
+        let current = self.tasks.iter().position(|task| !task.done);
         let mut lines: Vec<Line> = self
             .tasks
             .iter()
             .enumerate()
             .map(|(i, task)| {
+                let spinner = (current == Some(i)).then(|| self.spinner_frame());
                 if editing && self.editing_task == Some(i) {
-                    self.task_line(task.done, format!("{}█", self.input_buffer))
+                    self.task_line(task.done, format!("{}█", self.input_buffer), spinner)
                 } else {
-                    self.task_line(task.done, task.text.clone())
+                    self.task_line(task.done, task.text.clone(), spinner)
                 }
             })
             .collect();
 
         let adding = editing && self.editing_task.is_none();
         if adding {
-            lines.push(self.task_line(false, format!("{}█", self.input_buffer)));
+            lines.push(self.task_line(false, format!("{}█", self.input_buffer), None));
         }
 
         // Scroll just enough to keep the cursor row (selected task or new task) visible.
