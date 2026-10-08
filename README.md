@@ -371,6 +371,28 @@ the message includes the event name; for load errors, the plugin file name.
    and nothing when ptc is idle or not running (or died: a counting phase more than 5 seconds past
    its `ends_at` is ignored).
 
+### Pomodoro in your tmux status line
+
+`contrib/tmux/ptc-status.sh` reads the status file and prints the same text (`🍅 Focus 12:34`,
+`🍅 Break 03:20 (paused)`, ...), or nothing when ptc is idle or not running. It needs only bash,
+grep and sed.
+
+1. Put the script somewhere, e.g. `~/.config/tmux/ptc-status.sh`, and make it executable
+   (`install -m755 contrib/tmux/ptc-status.sh ~/.config/tmux/ptc-status.sh`).
+2. Add to `~/.tmux.conf`:
+
+   ```tmux
+   set -g status-interval 1          # re-run the #(...) commands every second
+   set -g status-right-length 80
+   set -g status-right '#[fg=red]#(~/.config/tmux/ptc-status.sh)#[default] | %H:%M'
+   ```
+
+   If you already use `status-right`, just add the `#(~/.config/tmux/ptc-status.sh)` part to it.
+3. Reload: `tmux source-file ~/.tmux.conf`.
+
+If you set `PTC_STATUS_FILE` for ptc, tmux needs the same variable
+(`tmux set-environment -g PTC_STATUS_FILE /your/path`).
+
 Any other program can read the same file, for example a tmux, polybar or waybar script. If you run
 several ptc instances at once, give each its own `PTC_STATUS_FILE`.
 
