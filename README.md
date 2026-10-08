@@ -62,6 +62,10 @@ half of it has passed**, that pomodoro is credited to the task you marked instea
 the end of the phase then credits nobody else. This happens once per work phase. Marking a task done in
 the first half, while idle, or during a break credits nothing.
 
+**Idle timer.** When a break ends by itself, the status bar under the clock changes to `Idle for 02:44` and
+keeps counting (`H:MM:SS` after an hour) until you start the next pomodoro. Skipping a break with `b` or
+stopping by hand doesn't start it.
+
 The hotkey list in the sidebar always shows the keys currently in use, so rebinding a key updates it.
 
 Tasks are saved automatically (see [Persistence](#persistence)).

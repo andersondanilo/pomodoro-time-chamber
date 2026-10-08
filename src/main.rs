@@ -431,6 +431,9 @@ struct App {
     /// The running work phase was already credited to a task (when it was marked done past
     /// half of the phase), so finishing it must not credit another task.
     work_credited: bool,
+    /// When the last break finished by itself; the idle time since then is shown in the status
+    /// bar. Cleared as soon as anything else starts or stops.
+    idle_since: Option<Instant>,
     completed_pomodoros: u32,
 }
 
@@ -459,6 +462,7 @@ impl App {
             paused_remaining: None,
             awaiting_break_start: false,
             work_credited: false,
+            idle_since: None,
             completed_pomodoros: 0,
         }
     }
@@ -487,6 +491,7 @@ impl App {
         self.paused_remaining = None;
         self.awaiting_break_start = false;
         self.work_credited = false;
+        self.idle_since = None;
     }
 
     /// Sets up a break without starting its countdown.
@@ -496,6 +501,7 @@ impl App {
         self.paused_remaining = Some(self.phase_duration(state));
         self.awaiting_break_start = true;
         self.work_credited = false;
+        self.idle_since = None;
     }
 
     fn stop_pomodoro(&mut self) {
@@ -504,6 +510,7 @@ impl App {
         self.paused_remaining = None;
         self.awaiting_break_start = false;
         self.work_credited = false;
+        self.idle_since = None;
     }
 
     /// A work phase is running (or paused) and more than half of it has passed.
@@ -564,6 +571,7 @@ impl App {
             }
             _ => {
                 self.stop_pomodoro();
+                self.idle_since = Some(Instant::now());
                 self.notify("Break finished", "Ready for the next pomodoro");
             }
         }
@@ -583,6 +591,20 @@ impl App {
                 .body(&body)
                 .show();
         });
+    }
+
+    /// Text of the status bar below the clock.
+    fn status_text(&self) -> String {
+        let label = self.pomodoro_state.label();
+        if self.awaiting_break_start {
+            format!("{label} (ready)")
+        } else if self.is_paused() {
+            format!("{label} (paused)")
+        } else if let Some(since) = self.idle_since.filter(|_| self.pomodoro_state == PomodoroState::Idle) {
+            format!("{label} for {}", format_elapsed(since.elapsed()))
+        } else {
+            label.to_string()
+        }
     }
 
     fn status_color(&self) -> Color {
@@ -929,13 +951,7 @@ impl App {
             .fg(self.config.theme.background)
             .bg(self.status_color());
         frame.render_widget(
-            Paragraph::new(if self.awaiting_break_start {
-                format!("{} (ready)", self.pomodoro_state.label())
-            } else if self.is_paused() {
-                format!("{} (paused)", self.pomodoro_state.label())
-            } else {
-                self.pomodoro_state.label().to_string()
-            })
+            Paragraph::new(self.status_text())
             .centered()
             .style(status_style),
             status_area,
@@ -1199,6 +1215,17 @@ impl App {
         self.input_buffer.clear();
         self.editing_task = None;
         self.mode = AppMode::Normal;
+    }
+}
+
+/// `MM:SS`, or `H:MM:SS` from one hour on.
+fn format_elapsed(elapsed: Duration) -> String {
+    let total = elapsed.as_secs();
+    let (hours, minutes, seconds) = (total / 3600, (total % 3600) / 60, total % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
     }
 }
 
@@ -1577,5 +1604,40 @@ mod tests {
             "a[current_task] b[current_task] c[current_task] c[current_task] none[current_task]"
         );
         assert!(app.plugins.as_ref().unwrap().take_errors().is_empty());
+    }
+
+    #[test]
+    fn status_shows_how_long_the_user_has_been_idle_after_a_break() {
+        let mut config = Config::default();
+        config.pomodoro.notifications = false;
+        let mut app = App::new(config);
+        assert_eq!(app.status_text(), "Idle");
+
+        // A break that finishes by itself starts the idle timer.
+        app.prepare_phase(PomodoroState::ShortBreak);
+        app.action_toggle_pomodoro(); // start the break
+        app.phase_ends_at = Some(Instant::now() - Duration::from_secs(1));
+        app.update_pomodoro();
+        assert!(app.pomodoro_state == PomodoroState::Idle);
+        assert_eq!(app.status_text(), "Idle for 00:00");
+
+        app.idle_since = Some(Instant::now() - Duration::from_secs(164));
+        assert_eq!(app.status_text(), "Idle for 02:44");
+        app.idle_since = Some(Instant::now() - Duration::from_secs(3725));
+        assert_eq!(app.status_text(), "Idle for 1:02:05");
+
+        // Starting a pomodoro clears it, and so does coming back to idle by hand.
+        app.action_toggle_pomodoro();
+        assert_eq!(app.status_text(), "Focus");
+        app.action_toggle_pomodoro();
+        assert_eq!(app.status_text(), "Idle");
+    }
+
+    #[test]
+    fn skipping_a_break_does_not_start_the_idle_timer() {
+        let mut app = App::new(Config::default());
+        app.prepare_phase(PomodoroState::LongBreak);
+        app.action_skip_break();
+        assert_eq!(app.status_text(), "Idle");
     }
 }
