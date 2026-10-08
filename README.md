@@ -147,6 +147,7 @@ works because the app runs in raw mode, where it is not turned into `Enter`.
 | `long_break_interval` | `4` | Every Nth pomodoro is followed by a long break |
 | `auto_start_break` | `false` | Start the break by itself; if `false`, it waits for `s` |
 | `notifications` | `true` | Desktop notification when a phase ends |
+| `auto_complete_tasks` | `false` | Mark a task as done as soon as its completed pomodoros reach the estimate. When `false`, the count keeps growing (`3/2`) until you mark it done with `x` |
 
 Numbers must be whole numbers (`30`, not `30.0`).
 

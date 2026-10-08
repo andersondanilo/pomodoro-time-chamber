@@ -277,6 +277,9 @@ struct PomodoroConfig {
     auto_start_break: bool,
     /// Send a desktop notification when a phase ends.
     notifications: bool,
+    /// Mark a task as done as soon as its completed pomodoros reach the estimate. When off, the
+    /// completed count keeps growing (even past the estimate) until the user marks it done.
+    auto_complete_tasks: bool,
 }
 
 impl Default for PomodoroConfig {
@@ -288,6 +291,7 @@ impl Default for PomodoroConfig {
             long_break_interval: 4,
             auto_start_break: false,
             notifications: true,
+            auto_complete_tasks: false,
         }
     }
 }
@@ -490,9 +494,10 @@ impl App {
         match self.pomodoro_state {
             PomodoroState::Work => {
                 self.completed_pomodoros += 1;
+                let auto_complete = self.config.pomodoro.auto_complete_tasks;
                 if let Some(task) = self.tasks.iter_mut().find(|task| !task.done) {
                     task.completed_pomodoros += 1;
-                    if task.completed_pomodoros >= task.estimated_pomodoros {
+                    if auto_complete && task.completed_pomodoros >= task.estimated_pomodoros {
                         task.done = true;
                     }
                 }
@@ -1347,5 +1352,50 @@ mod tests {
         assert_eq!("Ctrl++".parse::<KeyBinding>().unwrap().code, KeyCode::Char('+'));
         assert!("".parse::<KeyBinding>().is_err());
         assert!("bogus".parse::<KeyBinding>().is_err());
+    }
+
+    /// Finishes one work phase right away and returns to idle.
+    fn finish_pomodoro(app: &mut App) {
+        app.action_toggle_pomodoro();
+        app.phase_ends_at = Some(Instant::now() - Duration::from_secs(1));
+        app.update_pomodoro();
+        app.stop_pomodoro();
+    }
+
+    fn app_with_one_task(auto_complete_tasks: bool) -> App {
+        let mut config = Config::default();
+        config.pomodoro.notifications = false;
+        config.pomodoro.auto_complete_tasks = auto_complete_tasks;
+        let mut app = App::new(config);
+        app.tasks.push(Task {
+            text: "a".into(),
+            estimated_pomodoros: 2,
+            completed_pomodoros: 0,
+            done: false,
+        });
+        app
+    }
+
+    #[test]
+    fn tasks_keep_counting_past_the_estimate_by_default() {
+        let mut app = app_with_one_task(false);
+        for _ in 0..3 {
+            finish_pomodoro(&mut app);
+        }
+        assert_eq!(app.tasks[0].completed_pomodoros, 3);
+        assert!(!app.tasks[0].done);
+    }
+
+    #[test]
+    fn tasks_are_marked_done_at_the_estimate_when_enabled() {
+        let mut app = app_with_one_task(true);
+        finish_pomodoro(&mut app);
+        assert!(!app.tasks[0].done);
+        finish_pomodoro(&mut app);
+        assert_eq!(app.tasks[0].completed_pomodoros, 2);
+        assert!(app.tasks[0].done);
+        // Done tasks are not credited any more.
+        finish_pomodoro(&mut app);
+        assert_eq!(app.tasks[0].completed_pomodoros, 2);
     }
 }
