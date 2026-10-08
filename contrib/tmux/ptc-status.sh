@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Prints the ptc pomodoro for the tmux status line (prints nothing when there is nothing to show).
+# Prints the ptc pomodoro and the current task for the tmux status line (prints nothing when there
+# is nothing to show). PTC_TMUX_MAX_TASK (default 30) is the longest task name shown.
+# Count and cut the task name by characters, not bytes, whatever locale tmux runs this in.
+export LC_ALL=C.UTF-8
 file="${PTC_STATUS_FILE:-${XDG_RUNTIME_DIR:-/tmp}/ptc-status.json}"
 [ -r "$file" ] || exit 0
 
@@ -32,4 +35,15 @@ fi
 suffix=""
 [ "$paused" = true ] && suffix=" (paused)"
 [ "$waiting" = true ] && suffix=" (ready)"
-printf '🍅 %s %02d:%02d%s\n' "$label" $((left / 60)) $((left % 60)) "$suffix"
+
+# The task name is a JSON string: take it up to the first unescaped quote, undo the escapes and
+# shorten it. `#` is doubled because tmux would read `#[` or `#(` in the output as a style or command.
+max=${PTC_TMUX_MAX_TASK:-30}
+task=$(sed -n 's/.*"text": *"\(\([^"\\]\|\\.\)*\)".*/\1/p' "$file" | head -n1 \
+  | sed -e 's/\\"/"/g' -e 's/\\\\/\\/g' -e 's/\\[nrt]/ /g' -e 's/#/##/g')
+if [ "${#task}" -gt "$max" ]; then
+  task="${task:0:$((max - 1))}…"
+fi
+[ -n "$task" ] && task=" · $task"
+
+printf '🍅 %s %02d:%02d%s%s\n' "$label" $((left / 60)) $((left % 60)) "$suffix" "$task"

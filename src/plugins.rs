@@ -291,6 +291,7 @@ mod tests {
             completed_pomodoros: u32,
             ends_at: u64,
             remaining_seconds: u64,
+            current_task: Task,
         }
         host.emit(
             "pomodoro_state_changed",
@@ -301,6 +302,7 @@ mod tests {
                 completed_pomodoros: 2,
                 ends_at: 1_800_000_000,
                 remaining_seconds: 1500,
+                current_task: task("write the docs"),
             },
         );
         let status = read();
@@ -308,6 +310,8 @@ mod tests {
         assert_eq!(status["ends_at"], 1_800_000_000u64);
         assert_eq!(status["remaining_seconds"], 1500);
         assert_eq!(status["completed_pomodoros"], 2);
+        assert_eq!(status["current_task"]["text"], "write the docs");
+        assert_eq!(status["current_task"]["estimated_pomodoros"], 2);
         assert!(status["updated_at"].is_number());
 
         host.emit_empty("quit");

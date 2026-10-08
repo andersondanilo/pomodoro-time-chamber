@@ -4,7 +4,9 @@
 -- File: `ptc.status_file` ($PTC_STATUS_FILE, or $XDG_RUNTIME_DIR/ptc-status.json, falling back to /tmp)
 --
 -- The file holds: { state, paused, waiting, ends_at, remaining_seconds,
---                   completed_pomodoros, updated_at }
+--                   completed_pomodoros, current_task, updated_at }
+-- `current_task` ({ text, estimated_pomodoros, completed_pomodoros, done }) is the first task
+-- that is not done, and is absent when there is none.
 -- `state` is "idle", "work", "short_break", "long_break", or "off" (the app has quit).
 -- While counting down, readers compute the time left as `ends_at - now`; when `ends_at`
 -- is absent (paused, waiting, idle) they use `remaining_seconds` as is.
@@ -33,6 +35,7 @@ ptc.on("pomodoro_state_changed", function(e)
         ends_at = e.ends_at,
         remaining_seconds = e.remaining_seconds,
         completed_pomodoros = e.completed_pomodoros,
+        current_task = e.current_task,
     })
 end)
 

@@ -313,6 +313,12 @@ the message includes the event name; for load errors, the plugin file name.
      "ends_at": 1790000000,
      "remaining_seconds": 1500,
      "completed_pomodoros": 2,
+     "current_task": {
+       "text": "Write the README",
+       "estimated_pomodoros": 3,
+       "completed_pomodoros": 1,
+       "done": false
+     },
      "updated_at": 1789998500
    }
    ```
@@ -404,9 +410,11 @@ the message includes the event name; for load errors, the plugin file name.
 
 ### Pomodoro in your tmux status line
 
-`contrib/tmux/ptc-status.sh` reads the status file and prints the same text (`🍅 Focus 12:34`,
-`🍅 Break 03:20 (paused)`, ...), or nothing when ptc is idle or not running. It needs only bash,
-grep and sed.
+`contrib/tmux/ptc-status.sh` reads the status file and prints the timer and the current task
+(`🍅 Focus 12:34 · Write the README`, `🍅 Break 03:20 (paused) · Write the README`, ...), or nothing
+when ptc is idle or not running. Long task names are cut to 30 characters with `…`; set
+`PTC_TMUX_MAX_TASK` (for example `export PTC_TMUX_MAX_TASK=50` before starting tmux, or
+`tmux set-environment -g PTC_TMUX_MAX_TASK 50`) to change that. It needs only bash, grep and sed.
 
 1. Put the script somewhere, e.g. `~/.config/tmux/ptc-status.sh`, and make it executable
    (`install -m755 contrib/tmux/ptc-status.sh ~/.config/tmux/ptc-status.sh`).
@@ -415,7 +423,8 @@ grep and sed.
    ```tmux
    set -g status-interval 1          # re-run the #(...) commands every second
    set -g status-right-length 80
-   set -g status-right '#[fg=red]#(~/.config/tmux/ptc-status.sh)#[default] | %H:%M'
+   set -gF @status_right_base "#{status-right}"
+   set -g status-right '#[fg=red]#(~/.config/tmux/ptc-status.sh)#[default] #{E:@status_right_base}'
    ```
 
    If you already use `status-right`, just add the `#(~/.config/tmux/ptc-status.sh)` part to it.
