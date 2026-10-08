@@ -62,6 +62,9 @@ half of it has passed**, that pomodoro is credited to the task you marked instea
 the end of the phase then credits nobody else. This happens once per work phase. Marking a task done in
 the first half, while idle, or during a break credits nothing.
 
+The left side of the bar at the bottom of the task list shows the number of tasks and the number of completed pomodoros
+(not the total of the estimates) since ptc started (`5 Tasks · 3 Completed Pomodoros`); the right side shows the estimate.
+
 **Idle timer.** When a break ends by itself, the status bar under the clock changes to `Idle for 02:44` and
 keeps counting (`H:MM:SS` after an hour) until you start the next pomodoro. Skipping a break with `b` or
 stopping by hand doesn't start it.

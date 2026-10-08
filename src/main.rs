@@ -801,10 +801,15 @@ impl App {
         } else {
             format!("{minutes}m")
         };
-        let count = match self.tasks.len() {
+        let tasks_count = match self.tasks.len() {
             1 => "1 Task".to_string(),
             n => format!("{n} Tasks"),
         };
+        let pomodoros_count = match self.completed_pomodoros {
+            1 => "1 Completed Pomodoro".to_string(),
+            n => format!("{n} Completed Pomodoros"),
+        };
+        let count = format!("{tasks_count} · {pomodoros_count}");
         let finish_at = (chrono::Local::now() + self.estimated_time_left()).format("%H:%M");
         let bar_style = Style::new()
             .fg(theme.tasks_status_bar_text)
