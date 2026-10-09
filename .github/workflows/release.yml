@@ -2,7 +2,8 @@ name: Release
 
 # release-please keeps a "release PR" open on master (version bump in Cargo.toml and
 # CHANGELOG.md, built from conventional commits). Merging that PR creates the tag and the
-# GitHub release, and the build job below attaches the Linux binary to it.
+# GitHub release; the build job below attaches the Linux binary to it and the AUR job publishes
+# the Arch Linux package.
 on:
   push:
     branches: [master]
@@ -58,3 +59,11 @@ jobs:
 
       - name: Attach to the release
         run: gh release upload "$TAG" ptc-*.tar.gz ptc-*.tar.gz.sha256 --clobber
+
+  publish-aur:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/aur.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    secrets: inherit

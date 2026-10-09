@@ -17,7 +17,13 @@ The goal is not just to track time, but to help you plan, measure, and continuou
 
 ## Install
 
-Download the Linux (x86_64) binary from the [latest release](../../releases/latest):
+On Arch Linux, from the [AUR](https://aur.archlinux.org/packages/pomodoro-time-chamber) (builds from source):
+
+```sh
+yay -S pomodoro-time-chamber   # or paru, or makepkg from the AUR git repo
+```
+
+Otherwise, download the Linux (x86_64) binary from the [latest release](../../releases/latest):
 
 ```sh
 tar -xzf ptc-v*-x86_64-linux.tar.gz
@@ -463,7 +469,8 @@ the commit messages on `master`, so they must follow [Conventional Commits](http
    `CHANGELOG.md`.
 2. Merging that PR creates the tag (`vX.Y.Z`) and the GitHub release.
 3. The workflow then builds the Linux binary and attaches `ptc-vX.Y.Z-x86_64-linux.tar.gz` (and its
-   `.sha256`) to the release.
+   `.sha256`) to the release, and publishes the new version of the AUR package
+   (`aur/PKGBUILD`, see [One-time setup: the AUR package](#one-time-setup-the-aur-package)).
 
 The next version is computed from the commits since the last release: `fix:` bumps the patch
 (`1.0.0` -> `1.0.1`), `feat:` the minor (`1.1.0`) and a breaking change (`feat!:` or a
@@ -490,6 +497,27 @@ Actions to create and approve pull requests").
 3. Re-run the latest "Release" workflow (Actions tab), or push a commit to `master`.
 
 A classic token with the `repo` scope also works.
+
+### One-time setup: the AUR package
+
+The `publish-aur` job pushes `aur/PKGBUILD` (version and checksum filled in by the workflow) to the AUR
+package `pomodoro-time-chamber` using an SSH key stored as the secret `AUR_SSH_PRIVATE_KEY`.
+
+1. Create an account on [aur.archlinux.org](https://aur.archlinux.org).
+2. Generate a key used only for this: `ssh-keygen -t ed25519 -C "aur-ptc" -f ~/.ssh/aur_ptc -N ""`
+3. AUR > My Account > SSH Public Key: paste the contents of `~/.ssh/aur_ptc.pub`.
+4. Add the **private** key as a repository secret: `gh secret set AUR_SSH_PRIVATE_KEY < ~/.ssh/aur_ptc`
+   (or Settings > Secrets and variables > Actions > New repository secret).
+5. The package does not need to exist beforehand: the first push to `pomodoro-time-chamber` on the AUR
+   creates it.
+
+Until `AUR_SSH_PRIVATE_KEY` exists the AUR job is skipped (a notice in the run log), and the rest of
+the release is unaffected. To publish a release that already happened, run **Actions > Publish AUR
+package > Run workflow** and enter its tag (e.g. `v1.0.0`).
+
+To test the PKGBUILD locally, build from a tarball of your checkout (the PKGBUILD downloads the
+`vX.Y.Z` tag, which only exists after a release). The package needs `options=('!lto')`:
+makepkg's default LTO flags break linking of the bundled Lua.
 
 ## Development
 

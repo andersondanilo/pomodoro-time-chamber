@@ -2,6 +2,9 @@
 name = "pomodoro-time-chamber"
 version = "1.2.0"
 edition = "2024"
+description = "Terminal pomodoro timer with a task list, scriptable with Lua plugins"
+license = "MIT"
+repository = "https://github.com/andersondanilo/pomodoro-time-chamber"
 
 [[bin]]
 name = "ptc"
