@@ -40,7 +40,7 @@ Terminal pomodoro + task list app in Rust (edition 2024), built on `ratatui` (cr
 - Panel title is `TASKS`: bold, uppercase, no `|` decorations.
 - Sidebar padding is 3 columns left and right; tasks panel uses its own padding.
 - Task marker is a 3-column colored block (no brackets): background (`theme.task_unmarked`, defaults to the same color as `theme.background`, the left column) when open, green background (`theme.task_marked`) with a bold `x` in the middle (`theme.task_marked_text`) when done; only the marker is colored, built by `App::task_line`.
-- Art strings start with a `\n`, so the first row of each digit is blank; `clock_lines` relies on that (6 rows).
+- Art strings start with a `\n`, so the first row of each digit is blank; `clock_lines` relies on that (6 rows). Every art row must be at most `NUMBER_WIDTH` (6) columns wide: `clock_lines` trims trailing spaces and pads to 6, and the `every_clock_row_has_the_same_width` test renders all `MM:SS` to catch a misaligned glyph.
 
 ## Status / TODO
 - Timer has no sound/notification, and a finished break doesn't auto-roll into the next pomodoro.

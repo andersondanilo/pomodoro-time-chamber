@@ -1263,7 +1263,9 @@ fn clock_lines(duration: Duration) -> Vec<Line<'static>> {
                 rows.push(String::new());
             }
             rows[i].push_str(gap);
-            rows[i].push_str(&format!("{:<width$}", line));
+            // Trim before padding: a stray trailing space in the art would push the rest of the
+            // row to the right and misalign the colon and the following digits.
+            rows[i].push_str(&format!("{:<width$}", line.trim_end()));
         }
 
         last_ch = Some(ch);
@@ -1644,5 +1646,19 @@ mod tests {
         app.prepare_phase(PomodoroState::LongBreak);
         app.action_skip_break();
         assert_eq!(app.status_text(), "Idle");
+    }
+
+    #[test]
+    fn every_clock_row_has_the_same_width() {
+        for minutes in 0..60u64 {
+            for seconds in 0..60u64 {
+                let lines = clock_lines(Duration::from_secs(minutes * 60 + seconds));
+                let widths: Vec<usize> = lines.iter().map(|line| line.width()).collect();
+                assert!(
+                    widths.iter().all(|&w| w == widths[0]),
+                    "{minutes:02}:{seconds:02} has uneven rows: {widths:?}"
+                );
+            }
+        }
     }
 }
