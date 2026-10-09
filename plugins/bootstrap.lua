@@ -6,7 +6,7 @@ local EVENTS = {
     quit = true,                   -- once, when the app exits; payload: nil
     tasks_changed = true,          -- payload: list of tasks
     pomodoro_state_changed = true, -- payload: { state, previous, paused, waiting, completed_pomodoros,
-                                   --   remaining_seconds, ends_at?, current_task?, changed }
+                                   --   remaining_seconds, ends_at?, current_task?, idle_since?, changed }
 }
 
 local handlers = {}

@@ -233,6 +233,7 @@ The `pomodoro_state_changed` payload:
   remaining_seconds = 1500,  -- time left (the full phase length when idle or waiting)
   current_task = { text = "Write the README", estimated_pomodoros = 3,
                    completed_pomodoros = 1, done = false },  -- absent (nil) when no task is open
+  idle_since = 1789998000,   -- Unix time (seconds); only present while idle after a break finished by itself
   changed = { "state", "current_task" },  -- what differs from the previous event
 }
 ```
@@ -321,6 +322,8 @@ the message includes the event name; for load errors, the plugin file name.
    The file looks like this. While a phase is counting down it has `ends_at`, so readers compute
    `ends_at - now` themselves and ptc doesn't need to write every second. When paused, waiting or
    idle, `ends_at` is absent and `remaining_seconds` is used.
+   After a break that finished by itself, `state` is `idle` and `idle_since` holds the Unix time it
+   finished (the app shows `Idle for MM:SS`); any other idle has no `idle_since`.
 
    ```json
    {
@@ -422,14 +425,17 @@ the message includes the event name; for load errors, the plugin file name.
    status file to exist.
 
    It shows, for example, `🍅 Focus 12:28`, `🍅 Break 03:20 (paused)` or `🍅 Break 05:00 (ready)`,
-   and nothing when ptc is idle or not running (or died: a counting phase more than 5 seconds past
-   its `ends_at` is ignored).
+   and nothing when ptc is not running (or died: a counting phase more than 5 seconds past its
+   `ends_at` is ignored). A plain idle (never started, or stopped by hand) is hidden too, but the idle
+   that follows a finished break shows the same message as the app, `🍅 Idle for 02:44`, counting up
+   until you start the next pomodoro.
 
 ### Pomodoro in your tmux status line
 
 `contrib/tmux/ptc-status.sh` reads the status file and prints the timer and the current task
 (`🍅 Focus 12:34 · Write the README`, `🍅 Break 03:20 (paused) · Write the README`, ...), or nothing
-when ptc is idle or not running. Long task names are cut to 30 characters with `…`; set
+when ptc is not running or plain idle. After a break that finished by itself it shows `🍅 Idle for 02:44`
+(no task name), like the app. Long task names are cut to 30 characters with `…`; set
 `PTC_TMUX_MAX_TASK` (for example `export PTC_TMUX_MAX_TASK=50` before starting tmux, or
 `tmux set-environment -g PTC_TMUX_MAX_TASK 50`) to change that. It needs only bash, grep and sed.
 

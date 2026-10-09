@@ -10,17 +10,33 @@ file="${PTC_STATUS_FILE:-${XDG_RUNTIME_DIR:-/tmp}/ptc-status.json}"
 get() { grep -o "\"$1\": *\"\{0,1\}[^\",}]*" "$file" | head -n1 | sed 's/^[^:]*: *"\{0,1\}//'; }
 
 state=$(get state)
+now=$(date +%s)
+
+# Idle: nothing to show, except the idle time after a break that finished by itself
+# (the app's "Idle for MM:SS"). A plain idle has no `idle_since` and stays hidden.
+if [ "$state" = idle ]; then
+  idle_since=$(get idle_since)
+  [ -z "$idle_since" ] && exit 0
+  idle=$((now - idle_since))
+  [ "$idle" -lt 0 ] && idle=0
+  if [ "$idle" -ge 3600 ]; then
+    printf '🍅 Idle for %d:%02d:%02d\n' $((idle / 3600)) $((idle % 3600 / 60)) $((idle % 60))
+  else
+    printf '🍅 Idle for %02d:%02d\n' $((idle / 60)) $((idle % 60))
+  fi
+  exit 0
+fi
+
 case "$state" in
   work) label="Focus" ;;
   short_break) label="Break" ;;
   long_break) label="Long break" ;;
-  *) exit 0 ;; # idle, off or unreadable
+  *) exit 0 ;; # off or unreadable
 esac
 
 paused=$(get paused)
 waiting=$(get waiting)
 ends_at=$(get ends_at)
-now=$(date +%s)
 
 if [ -n "$ends_at" ] && [ "$paused" != true ] && [ "$waiting" != true ]; then
   # A running phase far past its end means ptc died without saying goodbye.

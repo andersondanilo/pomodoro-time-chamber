@@ -371,6 +371,10 @@ struct PomodoroEvent {
     /// The current task (the first one that is not done); absent when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     current_task: Option<Task>,
+    /// Unix timestamp (seconds) of the moment the last break finished by itself; present only
+    /// while idle since then (the app shows "Idle for MM:SS"). Absent for any other idle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    idle_since: Option<u64>,
     /// What differs from the previous event: any of `state`, `paused`, `waiting`, `current_task`.
     changed: Vec<&'static str>,
 }
@@ -675,6 +679,12 @@ impl App {
                         }),
                         remaining_seconds: self.remaining().as_secs_f64().ceil() as u64,
                         current_task: snapshot.current_task.clone(),
+                        idle_since: self.idle_since.map(|since| {
+                            let now = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default();
+                            now.saturating_sub(since.elapsed()).as_secs()
+                        }),
                         changed: snapshot.changes_from(&self.last_pomodoro),
                     },
                 );
@@ -1660,5 +1670,40 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn plugins_get_idle_since_only_after_a_break_finished() {
+        let mut app = app_with_plugin(
+            "idle_since",
+            r#"
+            log = {}
+            ptc.on("pomodoro_state_changed", function(e)
+                table.insert(log, e.state .. ":" .. (e.idle_since and "since" or "none"))
+            end)
+            "#,
+        );
+        app.config.pomodoro.notifications = false;
+
+        // Starting and finishing a break by itself.
+        app.prepare_phase(PomodoroState::ShortBreak);
+        app.action_toggle_pomodoro();
+        app.sync_plugins();
+        app.phase_ends_at = Some(Instant::now() - Duration::from_secs(1));
+        app.update_pomodoro();
+        app.sync_plugins();
+        // Starting a pomodoro, then stopping it by hand: plain idle, no timer.
+        app.action_toggle_pomodoro();
+        app.sync_plugins();
+        app.action_toggle_pomodoro();
+        app.sync_plugins();
+
+        let log: String = app
+            .plugins
+            .as_ref()
+            .unwrap()
+            .eval_for_test(r#"return table.concat(log, ",")"#);
+        assert_eq!(log, "short_break:none,idle:since,work:none,idle:none");
+        assert!(app.plugins.as_ref().unwrap().take_errors().is_empty());
     }
 }

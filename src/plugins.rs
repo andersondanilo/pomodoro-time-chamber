@@ -314,6 +314,20 @@ mod tests {
         assert_eq!(status["current_task"]["estimated_pomodoros"], 2);
         assert!(status["updated_at"].is_number());
 
+        // Idle after a finished break carries the moment it started; a plain idle does not.
+        #[derive(Serialize)]
+        struct IdleEvent {
+            state: &'static str,
+            // Like the real event: absent, not null, when there is none.
+            #[serde(skip_serializing_if = "Option::is_none")]
+            idle_since: Option<u64>,
+        }
+        host.emit("pomodoro_state_changed", &IdleEvent { state: "idle", idle_since: Some(1_800_000_100) });
+        assert_eq!(read()["state"], "idle");
+        assert_eq!(read()["idle_since"], 1_800_000_100u64);
+        host.emit("pomodoro_state_changed", &IdleEvent { state: "idle", idle_since: None });
+        assert!(read().get("idle_since").is_none());
+
         host.emit_empty("quit");
         assert_eq!(read()["state"], "off");
         assert!(host.take_errors().is_empty(), "{:?}", host.take_errors());

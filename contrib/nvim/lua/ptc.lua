@@ -38,11 +38,24 @@ local function read()
     current = ok and type(decoded) == "table" and decoded or nil
 end
 
+local function clock(seconds)
+    if seconds >= 3600 then
+        return string.format("%d:%02d:%02d", math.floor(seconds / 3600),
+            math.floor(seconds % 3600 / 60), seconds % 60)
+    end
+    return string.format("%02d:%02d", math.floor(seconds / 60), seconds % 60)
+end
+
 --- Text for the statusline, or "" when there is nothing to show.
 function M.status()
     local s = current
+    -- Idle after a break that finished by itself: the app's "Idle for MM:SS". A plain idle (never
+    -- started, or stopped by hand) has no `idle_since` and stays hidden.
+    if s and s.state == "idle" and s.idle_since then
+        return "🍅 Idle for " .. clock(math.max(0, os.time() - s.idle_since))
+    end
     if not s or not LABELS[s.state] then
-        return "" -- no ptc running, idle or quit
+        return "" -- no ptc running, plain idle or quit
     end
 
     local counting = s.ends_at and not s.paused and not s.waiting
