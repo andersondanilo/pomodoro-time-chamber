@@ -31,6 +31,7 @@ Each release also has a `.sha256` file to verify the download. Or build it yours
 ```sh
 cargo build --release
 ./target/release/ptc      # or: cargo run
+./target/release/ptc --preset job   # a separate task list and config, see Presets
 ```
 
 The binary is called `ptc`. Lua 5.4 is compiled into it, so you don't need Lua installed (you do
@@ -72,6 +73,38 @@ stopping by hand doesn't start it.
 The hotkey list in the sidebar always shows the keys currently in use, so rebinding a key updates it.
 
 Tasks are saved automatically (see [Persistence](#persistence)).
+
+## Presets
+
+`ptc --preset job` runs ptc with a preset, to keep separate setups, for example work and personal. The
+name is made of letters, digits, `-` and `_`. A preset changes two things, and only through file
+names (no extra folders):
+
+- **Tasks:** they are saved in `tasks.job.json` instead of `tasks.json`, so every preset has its own
+  list. Without `--preset` nothing changes.
+- **Configuration:** plugin files named `<name>.<preset>.lua` are loaded only with that preset, right
+  after the shared `<name>.lua`. For example, with `~/.config/ptc/plugins/`:
+
+  ```
+  00-config.lua        # always loaded
+  00-config.job.lua    # also loaded with --preset job, after 00-config.lua
+  10-sound.lua         # always loaded
+  20-home.home.lua     # loaded only with --preset home
+  ```
+
+  Because `ptc.config` merges, a preset file only needs the options that differ:
+
+  ```lua
+  -- 00-config.job.lua
+  ptc.config({ pomodoro = { work_minutes = 50 }, theme = { background = "#10202e" } })
+  ```
+
+Plugins can also read `ptc.preset` (a string, or `nil` when there is no preset) to behave differently.
+Because of the dot in the file name, a plugin file name must not contain other dots.
+
+Everything else is shared, including the **status file** (so tmux and Neovim show whichever ptc you
+ran last, and two ptc instances still overwrite each other's file unless you give each its own
+`PTC_STATUS_FILE`).
 
 ## Configuration
 
@@ -185,7 +218,8 @@ replace the task list, but they cannot add hotkeys or UI.
 ### Where plugins live
 
 Every `*.lua` file in `~/.config/ptc/plugins/` is loaded at startup, in file-name order (prefix
-names with numbers, like `00-config.lua`, to control order). The directory is
+names with numbers, like `00-config.lua`, to control order). Files named `<name>.<preset>.lua` are
+only loaded with `--preset <preset>` (see [Presets](#presets)). The directory is
 `$XDG_CONFIG_HOME/ptc/plugins` if that variable is set. The path is also available to plugins as
 `ptc.plugins_dir`.
 
@@ -203,6 +237,7 @@ Two built-in core plugins are always loaded first: `plugins/core_persist.lua` (s
 | `ptc.json.decode(text)` | JSON string to a Lua value. |
 | `ptc.data_dir` | Directory for plugin data, `~/.local/share/ptc` (created for you). |
 | `ptc.plugins_dir` | Directory plugins are loaded from. |
+| `ptc.preset` | The `--preset` name, or `nil` without one (see [Presets](#presets)). |
 | `ptc.status_file` | Path of the status file written by the core plugin (see [Integrations](#integrations)). |
 
 ### Events
@@ -296,7 +331,8 @@ end)
 
 ### Persistence
 
-The core plugin saves the task list to `~/.local/share/ptc/tasks.json` on every `tasks_changed` (it
+The core plugin saves the task list to `~/.local/share/ptc/tasks.json` (`tasks.<preset>.json` with
+`--preset`) on every `tasks_changed` (it
 writes a temporary file and renames it, so a crash can't corrupt the list) and loads it on
 `startup`.
 

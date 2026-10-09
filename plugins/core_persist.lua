@@ -1,6 +1,7 @@
--- Core plugin: keeps the task list on disk (<data_dir>/tasks.json).
+-- Core plugin: keeps the task list on disk (<data_dir>/tasks.json, or tasks.<preset>.json when
+-- ptc runs with --preset, so each preset has its own tasks).
 
-local path = ptc.data_dir .. "/tasks.json"
+local path = ptc.data_dir .. "/tasks" .. (ptc.preset and ("." .. ptc.preset) or "") .. ".json"
 
 ptc.on("startup", function()
     local file = io.open(path, "r")

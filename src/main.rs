@@ -1284,7 +1284,73 @@ fn clock_lines(duration: Duration) -> Vec<Line<'static>> {
     rows.into_iter().map(Line::from).collect()
 }
 
+const USAGE: &str = "\
+Terminal pomodoro timer with a task list
+
+Usage: ptc [--preset <name>]
+
+Options:
+  --preset <name>  Use the preset <name>: its own tasks (tasks.<name>.json), the plugins named
+                   <file>.<name>.lua on top of the shared ones, and `ptc.preset` in Lua plugins.
+                   Names are letters, digits, `-` and `_`.
+  -h, --help       Print this help
+  -V, --version    Print the version";
+
+/// What the command line asks for.
+#[derive(Debug, PartialEq)]
+enum Cli {
+    Run { preset: Option<String> },
+    Help,
+    Version,
+}
+
+fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
+    let mut preset = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        let value = match arg.as_str() {
+            "-h" | "--help" => return Ok(Cli::Help),
+            "-V" | "--version" => return Ok(Cli::Version),
+            "--preset" => args
+                .next()
+                .ok_or("--preset needs a name, e.g. `ptc --preset job`")?,
+            other => match other.strip_prefix("--preset=") {
+                Some(name) => name.to_string(),
+                None => return Err(format!("unknown argument `{other}`")),
+            },
+        };
+        // The name ends up in file names (tasks.<name>.json, <file>.<name>.lua).
+        let valid = !value.is_empty()
+            && value
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        if !valid {
+            return Err(format!(
+                "invalid preset name `{value}`: use only letters, digits, `-` and `_`"
+            ));
+        }
+        preset = Some(value);
+    }
+    Ok(Cli::Run { preset })
+}
+
 fn main() -> io::Result<()> {
+    let preset = match parse_args(std::env::args().skip(1)) {
+        Ok(Cli::Run { preset }) => preset,
+        Ok(Cli::Help) => {
+            println!("{USAGE}");
+            return Ok(());
+        }
+        Ok(Cli::Version) => {
+            println!("ptc {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Err(message) => {
+            eprintln!("ptc: {message}\n\n{USAGE}");
+            std::process::exit(2);
+        }
+    };
+
     let mut app = App::new(Config::default());
 
     if let Some(dirs) = directories::ProjectDirs::from("", "", "ptc") {
@@ -1299,7 +1365,7 @@ fn main() -> io::Result<()> {
                     .unwrap_or_else(|| PathBuf::from("/tmp"));
                 dir.join("ptc-status.json")
             });
-        match PluginHost::new(dirs.data_dir(), &plugins_dir, &status_file) {
+        match PluginHost::new(dirs.data_dir(), &plugins_dir, &status_file, preset.as_deref()) {
             Ok(host) => {
                 host.load_user_plugins();
                 app.plugins = Some(host);
@@ -1333,7 +1399,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json"), None).unwrap();
         host.load_source(
             "recorder",
             r#"
@@ -1381,7 +1447,7 @@ mod tests {
             .join(name);
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json"), None).unwrap();
         host.load_source("test", source);
         let mut app = App::new(Config::default());
         app.plugins = Some(host);
@@ -1705,5 +1771,31 @@ mod tests {
             .eval_for_test(r#"return table.concat(log, ",")"#);
         assert_eq!(log, "short_break:none,idle:since,work:none,idle:none");
         assert!(app.plugins.as_ref().unwrap().take_errors().is_empty());
+    }
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|arg| arg.to_string()).collect()
+    }
+
+    #[test]
+    fn command_line_arguments() {
+        assert_eq!(parse_args(args(&[])), Ok(Cli::Run { preset: None }));
+        assert_eq!(
+            parse_args(args(&["--preset", "job"])),
+            Ok(Cli::Run { preset: Some("job".into()) })
+        );
+        assert_eq!(
+            parse_args(args(&["--preset=side-project_2"])),
+            Ok(Cli::Run { preset: Some("side-project_2".into()) })
+        );
+        assert_eq!(parse_args(args(&["--help"])), Ok(Cli::Help));
+        assert_eq!(parse_args(args(&["-V"])), Ok(Cli::Version));
+
+        assert!(parse_args(args(&["--preset"])).is_err());
+        assert!(parse_args(args(&["--preset="])).is_err());
+        assert!(parse_args(args(&["--preset", "../etc"])).is_err());
+        assert!(parse_args(args(&["--preset", "a.b"])).is_err());
+        assert!(parse_args(args(&["--nope"])).is_err());
+        assert!(parse_args(args(&["job"])).is_err());
     }
 }

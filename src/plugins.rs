@@ -27,6 +27,7 @@ pub struct PluginHost {
     lua: Lua,
     emit: Function,
     plugins_dir: PathBuf,
+    preset: Option<String>,
     /// Tasks a plugin asked for with `ptc.set_tasks`, not yet applied by the app.
     pending_tasks: Rc<RefCell<Option<Vec<Task>>>>,
     /// Config patches from `ptc.config`, merged by the app in order.
@@ -35,8 +36,14 @@ pub struct PluginHost {
 }
 
 impl PluginHost {
-    /// Creates the Lua state with the `ptc` API and loads the core plugins.
-    pub fn new(data_dir: &Path, plugins_dir: &Path, status_file: &Path) -> mlua::Result<Self> {
+    /// Creates the Lua state with the `ptc` API and loads the core plugins. `preset` is the
+    /// `--preset` name, available to plugins as `ptc.preset` (nil without one).
+    pub fn new(
+        data_dir: &Path,
+        plugins_dir: &Path,
+        status_file: &Path,
+        preset: Option<&str>,
+    ) -> mlua::Result<Self> {
         let lua = Lua::new();
         let pending_tasks = Rc::new(RefCell::new(None));
         let pending_config = Rc::new(RefCell::new(Vec::new()));
@@ -46,6 +53,9 @@ impl PluginHost {
         ptc.set("data_dir", data_dir.to_string_lossy().into_owned())?;
         ptc.set("plugins_dir", plugins_dir.to_string_lossy().into_owned())?;
         ptc.set("status_file", status_file.to_string_lossy().into_owned())?;
+        if let Some(preset) = preset {
+            ptc.set("preset", preset)?;
+        }
 
         let pending = Rc::clone(&pending_tasks);
         ptc.set(
@@ -103,6 +113,7 @@ impl PluginHost {
             lua,
             emit,
             plugins_dir: plugins_dir.to_path_buf(),
+            preset: preset.map(str::to_string),
             pending_tasks,
             pending_config,
             errors,
@@ -113,18 +124,32 @@ impl PluginHost {
         Ok(host)
     }
 
-    /// Loads every `*.lua` file of the plugins directory, in name order.
+    /// Loads the `*.lua` files of the plugins directory.
+    ///
+    /// A file named `<name>.<preset>.lua` is a preset variant: it is loaded only when ptc runs with
+    /// `--preset <preset>`, right after the shared `<name>.lua`. Everything else loads always.
     pub fn load_user_plugins(&self) {
         let Ok(entries) = fs::read_dir(&self.plugins_dir) else {
             return;
         };
-        let mut files: Vec<PathBuf> = entries
+        let mut plugins: Vec<(String, Option<String>, PathBuf)> = entries
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
             .filter(|path| path.extension().is_some_and(|ext| ext == "lua"))
+            .filter_map(|path| {
+                let stem = path.file_stem()?.to_string_lossy().into_owned();
+                let (name, preset) = match stem.rsplit_once('.') {
+                    Some((name, preset)) => (name.to_string(), Some(preset.to_string())),
+                    None => (stem, None),
+                };
+                Some((name, preset, path))
+            })
+            // Presets other than the current one are skipped.
+            .filter(|(_, preset, _)| preset.is_none() || *preset == self.preset)
             .collect();
-        files.sort();
+        // By name, the shared file before its preset variant.
+        plugins.sort_by(|a, b| (&a.0, a.1.is_some()).cmp(&(&b.0, b.1.is_some())));
 
-        for file in files {
+        for (_, _, file) in plugins {
             let name = file.file_stem().unwrap_or_default().to_string_lossy().into_owned();
             match fs::read_to_string(&file) {
                 Ok(source) => self.load_source(&name, &source),
@@ -201,7 +226,7 @@ mod tests {
     #[test]
     fn handlers_receive_events_and_errors_are_collected() {
         let dir = scratch_dir("events");
-        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json"), None).unwrap();
         host.load_source(
             "test",
             r#"
@@ -236,7 +261,7 @@ mod tests {
     #[test]
     fn unknown_events_are_rejected() {
         let dir = scratch_dir("unknown");
-        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json"), None).unwrap();
         host.load_source("test", r#"ptc.on("nope", function() end)"#);
         assert_eq!(host.take_errors().len(), 1);
     }
@@ -245,13 +270,13 @@ mod tests {
     fn core_plugin_persists_tasks_across_hosts() {
         let dir = scratch_dir("persist");
 
-        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json"), None).unwrap();
         host.emit_empty("startup");
         assert!(host.take_pending_tasks().is_none());
         host.emit("tasks_changed", &vec![task("write"), task("test")]);
         assert!(host.take_errors().is_empty(), "{:?}", host.take_errors());
 
-        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json"), None).unwrap();
         host.emit_empty("startup");
         let tasks = host.take_pending_tasks().unwrap();
         assert_eq!(tasks.len(), 2);
@@ -262,11 +287,11 @@ mod tests {
     #[test]
     fn empty_task_list_round_trips() {
         let dir = scratch_dir("empty");
-        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json"), None).unwrap();
         host.emit("tasks_changed", &Vec::<Task>::new());
         assert!(host.take_errors().is_empty(), "{:?}", host.take_errors());
 
-        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json")).unwrap();
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json"), None).unwrap();
         host.emit_empty("startup");
         assert_eq!(host.take_pending_tasks().unwrap().len(), 0);
     }
@@ -275,7 +300,7 @@ mod tests {
     fn status_file_core_plugin_writes_the_status_file() {
         let dir = scratch_dir("status_file");
         let file = dir.join("status.json");
-        let host = PluginHost::new(&dir, &dir, &file).unwrap();
+        let host = PluginHost::new(&dir, &dir, &file, None).unwrap();
         let read = || -> serde_json::Value {
             serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap()
         };
@@ -331,5 +356,43 @@ mod tests {
         host.emit_empty("quit");
         assert_eq!(read()["state"], "off");
         assert!(host.take_errors().is_empty(), "{:?}", host.take_errors());
+    }
+
+    #[test]
+    fn preset_is_visible_to_plugins_and_selects_plugin_variants_and_the_tasks_file() {
+        let dir = scratch_dir("preset");
+        let status = dir.join("ptc-status.json");
+        // `a.job.lua` is a variant of `a.lua`, `b.home.lua` belongs to another preset.
+        for (file, body) in [
+            ("a.lua", r#"log = (log or "") .. "a,""#),
+            ("a.job.lua", r#"log = (log or "") .. "a.job,""#),
+            ("b.home.lua", r#"log = (log or "") .. "b.home,""#),
+            ("c.lua", r#"log = (log or "") .. "c,""#),
+        ] {
+            fs::write(dir.join(file), body).unwrap();
+        }
+
+        let host = PluginHost::new(&dir, &dir, &status, Some("job")).unwrap();
+        host.load_user_plugins();
+        assert!(host.take_errors().is_empty());
+        assert_eq!(host.eval_for_test("return ptc.preset"), "job");
+        // The variant loads right after its shared file; other presets' files are skipped.
+        assert_eq!(host.eval_for_test("return log"), "a,a.job,c,");
+
+        // Tasks are kept per preset.
+        host.emit("tasks_changed", &vec![task("only in job")]);
+        assert!(dir.join("tasks.job.json").exists());
+        assert!(!dir.join("tasks.json").exists());
+
+        let host = PluginHost::new(&dir, &dir, &status, None).unwrap();
+        host.load_user_plugins();
+        assert_eq!(host.eval_for_test("return tostring(ptc.preset)"), "nil");
+        assert_eq!(host.eval_for_test("return log"), "a,c,");
+        host.emit_empty("startup");
+        assert!(host.take_pending_tasks().is_none(), "the default tasks file is separate");
+
+        let host = PluginHost::new(&dir, &dir, &status, Some("job")).unwrap();
+        host.emit_empty("startup");
+        assert_eq!(host.take_pending_tasks().unwrap()[0].text, "only in job");
     }
 }
