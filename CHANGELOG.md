@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.0](https://github.com/andersondanilo/pomodoro-time-chamber/compare/v1.2.0...v1.3.0) (2026-10-09)
+
+
+### Features
+
+* add --preset to keep separate tasks and config ([b455c0b](https://github.com/andersondanilo/pomodoro-time-chamber/commit/b455c0bb6197c00e85808307bd4f92533178ec08))
+* show the idle time after a finished break in tmux and Neovim ([210d9f4](https://github.com/andersondanilo/pomodoro-time-chamber/commit/210d9f41d984184b6c3bae00a80ed048ce160928))
+
 ## [1.2.0](https://github.com/andersondanilo/pomodoro-time-chamber/compare/v1.1.0...v1.2.0) (2026-10-09)
 
 
