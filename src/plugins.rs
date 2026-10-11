@@ -209,6 +209,7 @@ mod tests {
 
     fn task(text: &str) -> Task {
         Task {
+            id: 0,
             text: text.to_string(),
             estimated_pomodoros: 2,
             completed_pomodoros: 1,

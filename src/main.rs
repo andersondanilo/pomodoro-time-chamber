@@ -7,6 +7,7 @@ use std::{
 };
 
 use plugins::PluginHost;
+use stats::Stats;
 use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -18,6 +19,8 @@ use ratatui::{
 
 mod number_ascii_art;
 mod plugins;
+mod stats;
+mod stats_view;
 
 const SIDEBAR_WIDTH: u16 = 40;
 const MIN_ESTIMATED_POMODOROS: u32 = 1;
@@ -57,6 +60,24 @@ struct Theme {
     task_marked_text: Color,
     /// The animated `✻` before the current task.
     task_spinner: Color,
+    /// Statistics page.
+    stats_title: Color,
+    stats_heading: Color,
+    stats_label: Color,
+    /// Secondary text, empty states and the days without pomodoros.
+    stats_dim: Color,
+    /// The estimated part of a bar in the worst estimates.
+    stats_estimated: Color,
+    /// The part over the estimate: the worst task has the first colour, the 10th the second.
+    stats_overrun_worst: Color,
+    stats_overrun_mild: Color,
+    /// Bars of the days chart go from the low to the high colour with the number of pomodoros.
+    stats_chart_low: Color,
+    stats_chart_high: Color,
+    /// The bar and the label of today.
+    stats_today: Color,
+    /// Text drawn on a bar (its value).
+    stats_bar_text: Color,
 }
 
 impl Default for Theme {
@@ -81,6 +102,17 @@ impl Default for Theme {
             task_marked: Color::Green,
             task_marked_text: Color::Black,
             task_spinner: Color::Rgb(0xd9, 0x77, 0x57),
+            stats_title: Color::Rgb(0xe0, 0xaf, 0x68),
+            stats_heading: Color::Rgb(0x7a, 0xa2, 0xf7),
+            stats_label: Color::Rgb(0xc0, 0xca, 0xf5),
+            stats_dim: Color::Rgb(0x56, 0x5f, 0x89),
+            stats_estimated: Color::Rgb(0x2a, 0xc3, 0xde),
+            stats_overrun_worst: Color::Rgb(0xf7, 0x76, 0x8e),
+            stats_overrun_mild: Color::Rgb(0xe0, 0xaf, 0x68),
+            stats_chart_low: Color::Rgb(0x3d, 0x59, 0xa1),
+            stats_chart_high: Color::Rgb(0xbb, 0x9a, 0xf7),
+            stats_today: Color::Rgb(0xff, 0x9e, 0x64),
+            stats_bar_text: Color::Rgb(0x1a, 0x1b, 0x26),
         }
     }
 }
@@ -232,6 +264,8 @@ struct Keyboard {
     clear_all: KeyBinding,
     increase_estimate: KeyBinding,
     decrease_estimate: KeyBinding,
+    show_stats: KeyBinding,
+    close_stats: KeyBinding,
     select_next: KeyBinding,
     select_previous: KeyBinding,
     move_task_down: KeyBinding,
@@ -255,6 +289,8 @@ impl Default for Keyboard {
             clear_all: KeyBinding::plain(KeyCode::Char('C')),
             increase_estimate: KeyBinding::plain(KeyCode::Char('+')),
             decrease_estimate: KeyBinding::plain(KeyCode::Char('-')),
+            show_stats: KeyBinding::plain(KeyCode::Char('i')),
+            close_stats: KeyBinding::plain(KeyCode::Esc),
             select_next: KeyBinding::plain(KeyCode::Char('j')),
             select_previous: KeyBinding::plain(KeyCode::Char('k')),
             move_task_down: KeyBinding::ctrl(KeyCode::Char('j')),
@@ -336,10 +372,15 @@ impl PomodoroState {
 enum AppMode {
     Normal,
     TaskTextInput,
+    /// The statistics page replaces the task list.
+    Stats,
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 struct Task {
+    /// Stable identity (0 = not assigned yet); the statistics remember tasks by it.
+    #[serde(default)]
+    id: u64,
     text: String,
     /// Always at least `MIN_ESTIMATED_POMODOROS`.
     #[serde(default = "default_estimate")]
@@ -412,6 +453,16 @@ impl PomodoroSnapshot {
 struct App {
     config: Config,
     plugins: Option<PluginHost>,
+    /// The `--preset` name; the statistics page shows it.
+    preset: Option<String>,
+    stats: Stats,
+    /// Where the statistics are saved (`None` in tests).
+    stats_path: Option<PathBuf>,
+    stats_dirty: bool,
+    /// The last problem saving the statistics, printed when the app exits.
+    stats_error: Option<String>,
+    /// Last task id handed out; ids only grow, so they are never reused.
+    last_task_id: u64,
     /// Tasks as of the last `tasks_changed` event.
     last_tasks: Vec<Task>,
     last_pomodoro: PomodoroSnapshot,
@@ -446,6 +497,12 @@ impl App {
         App {
             config,
             plugins: None,
+            preset: None,
+            stats: Stats::default(),
+            stats_path: None,
+            stats_dirty: false,
+            stats_error: None,
+            last_task_id: 0,
             last_tasks: Vec::new(),
             last_pomodoro: PomodoroSnapshot {
                 state: PomodoroState::Idle,
@@ -546,6 +603,8 @@ impl App {
         match self.pomodoro_state {
             PomodoroState::Work => {
                 self.completed_pomodoros += 1;
+                self.stats.record_pomodoro(chrono::Local::now().date_naive());
+                self.stats_dirty = true;
                 let auto_complete = self.config.pomodoro.auto_complete_tasks;
                 let already_credited = self.work_credited;
                 let first_open = self.tasks.iter_mut().find(|task| !task.done);
@@ -626,9 +685,41 @@ impl App {
             self.update_pomodoro();
             terminal.draw(|frame| self.draw(frame))?;
             self.handle_events()?;
+            // Before the plugins, so the ids are part of the first `tasks_changed`.
+            self.sync_stats();
             self.sync_plugins();
         }
         Ok(())
+    }
+
+    fn next_task_id(&mut self) -> u64 {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        self.last_task_id = nanos.max(self.last_task_id + 1);
+        self.last_task_id
+    }
+
+    /// Gives ids to tasks that have none, updates the statistics from the task list and saves them
+    /// when they changed.
+    fn sync_stats(&mut self) {
+        for i in 0..self.tasks.len() {
+            if self.tasks[i].id == 0 {
+                self.tasks[i].id = self.next_task_id();
+            }
+        }
+        if self.stats.observe_tasks(&self.tasks) {
+            self.stats_dirty = true;
+        }
+        if self.stats_dirty {
+            self.stats_dirty = false;
+            if let Some(path) = &self.stats_path {
+                if let Err(err) = self.stats.save(path) {
+                    self.stats_error = Some(format!("stats: could not save {}: {err}", path.display()));
+                }
+            }
+        }
     }
 
     fn pomodoro_snapshot(&self) -> PomodoroSnapshot {
@@ -649,6 +740,11 @@ impl App {
         self.apply_plugin_tasks();
         self.last_tasks = self.tasks.clone();
         self.last_pomodoro = self.pomodoro_snapshot();
+    }
+
+    /// Saves what is pending.
+    fn shutdown_stats(&mut self) {
+        self.sync_stats();
     }
 
     fn shutdown_plugins(&mut self) {
@@ -738,7 +834,18 @@ impl App {
                 .areas(frame.area());
 
         self.draw_sidebar(frame, left);
-        self.draw_tasks(frame, right);
+        if matches!(self.mode, AppMode::Stats) {
+            stats_view::draw(
+                frame,
+                right,
+                &self.config.theme,
+                &self.stats,
+                self.preset.as_deref(),
+                chrono::Local::now().date_naive(),
+            );
+        } else {
+            self.draw_tasks(frame, right);
+        }
     }
 
     /// Animated `✻` (like Claude Code's spinner), still while the pomodoro is idle.
@@ -935,6 +1042,35 @@ impl App {
         }
     }
 
+    /// The hotkey hints: the key in its colour, then the arrow and the label.
+    fn render_hotkeys(
+        &self,
+        frame: &mut Frame,
+        hotkeys: Vec<(KeyBinding, &'static str)>,
+        area: Rect,
+    ) {
+        // Pad the keys to the widest one so every label starts at the same column.
+        let key_width = hotkeys
+            .iter()
+            .map(|(key, _)| key.to_string().chars().count())
+            .max()
+            .unwrap_or(0);
+        let hotkeys: Vec<Line> = hotkeys
+            .into_iter()
+            .map(|(key, label)| {
+                let theme = &self.config.theme;
+                Line::from(vec![
+                    Span::styled(
+                        format!("{:<key_width$}", key.to_string()),
+                        Style::new().fg(theme.hotkey_key),
+                    ),
+                    Span::styled(format!(" → {label}"), Style::new().fg(theme.hotkey)),
+                ])
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(hotkeys), area);
+    }
+
     fn draw_sidebar(&self, frame: &mut Frame, area: Rect) {
         let inner = Block::new().padding(Padding::new(3, 3, 1, 1)).inner(area);
         let [title_area, clock_area, _, status_area, _, hotkeys_area] = Layout::vertical([
@@ -974,7 +1110,8 @@ impl App {
 
         let keyboard = &self.config.keyboard;
         let hotkeys = match self.mode {
-            AppMode::Normal => {
+            AppMode::Normal | AppMode::Stats => {
+                let stats_open = matches!(self.mode, AppMode::Stats);
                 let idle = self.pomodoro_state == PomodoroState::Idle;
                 let mut hotkeys = vec![(
                     keyboard.toggle_pomodoro,
@@ -999,6 +1136,12 @@ impl App {
                 if self.in_break() {
                     hotkeys.push((keyboard.skip_break, "Skip break"));
                 }
+                if stats_open {
+                    // Only the pomodoro controls work on this page.
+                    hotkeys.insert(0, (keyboard.close_stats, "Back to the tasks"));
+                    hotkeys.push((keyboard.quit, "Quit"));
+                    return self.render_hotkeys(frame, hotkeys, hotkeys_area);
+                }
                 hotkeys.extend([
                     (keyboard.add_task, "Add new task"),
                     (keyboard.edit_task, "Edit task"),
@@ -1012,6 +1155,7 @@ impl App {
                     (keyboard.select_previous, "Previous task"),
                     (keyboard.move_task_down, "Move task down"),
                     (keyboard.move_task_up, "Move task up"),
+                    (keyboard.show_stats, "Statistics"),
                     (keyboard.quit, "Quit"),
                 ]);
                 hotkeys
@@ -1021,26 +1165,7 @@ impl App {
                 (keyboard.cancel_task, "Cancel"),
             ],
         };
-        // Pad the keys to the widest one so every label starts at the same column.
-        let key_width = hotkeys
-            .iter()
-            .map(|(key, _)| key.to_string().chars().count())
-            .max()
-            .unwrap_or(0);
-        let hotkeys: Vec<Line> = hotkeys
-            .into_iter()
-            .map(|(key, label)| {
-                let theme = &self.config.theme;
-                Line::from(vec![
-                    Span::styled(
-                        format!("{:<key_width$}", key.to_string()),
-                        Style::new().fg(theme.hotkey_key),
-                    ),
-                    Span::styled(format!(" → {label}"), Style::new().fg(theme.hotkey)),
-                ])
-            })
-            .collect();
-        frame.render_widget(Paragraph::new(hotkeys), hotkeys_area);
+        self.render_hotkeys(frame, hotkeys, hotkeys_area);
     }
 
     fn handle_events(&mut self) -> io::Result<()> {
@@ -1054,7 +1179,11 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return Ok(());
         }
+        self.handle_key(key);
+        Ok(())
+    }
 
+    fn handle_key(&mut self, key: KeyEvent) {
         let keyboard = &self.config.keyboard;
         match self.mode {
             AppMode::Normal => match key.code {
@@ -1074,6 +1203,18 @@ impl App {
                 _ if keyboard.select_previous.matches(&key) => self.action_select_previous(),
                 _ if keyboard.move_task_down.matches(&key) => self.action_move_task_down(),
                 _ if keyboard.move_task_up.matches(&key) => self.action_move_task_up(),
+                _ if keyboard.show_stats.matches(&key) => self.mode = AppMode::Stats,
+                _ => {}
+            },
+            // The page is only for looking at; the pomodoro keeps working underneath it.
+            AppMode::Stats => match key.code {
+                _ if keyboard.close_stats.matches(&key) || keyboard.show_stats.matches(&key) => {
+                    self.mode = AppMode::Normal
+                }
+                _ if keyboard.quit.matches(&key) => self.should_quit = true,
+                _ if keyboard.toggle_pomodoro.matches(&key) => self.action_toggle_pomodoro(),
+                _ if keyboard.pause_pomodoro.matches(&key) => self.action_pause_pomodoro(),
+                _ if keyboard.skip_break.matches(&key) => self.action_skip_break(),
                 _ => {}
             },
             AppMode::TaskTextInput => match key.code {
@@ -1088,7 +1229,6 @@ impl App {
                 _ => {}
             },
         }
-        Ok(())
     }
 
     fn action_toggle_pomodoro(&mut self) {
@@ -1214,6 +1354,7 @@ impl App {
                 Some(i) => self.tasks[i].text = text.to_string(),
                 None => {
                     self.tasks.push(Task {
+                        id: 0,
                         text: text.to_string(),
                         estimated_pomodoros: MIN_ESTIMATED_POMODOROS,
                         completed_pomodoros: 0,
@@ -1352,9 +1493,20 @@ fn main() -> io::Result<()> {
     };
 
     let mut app = App::new(Config::default());
+    app.preset = preset.clone();
+    let mut startup_notes = Vec::new();
 
     if let Some(dirs) = directories::ProjectDirs::from("", "", "ptc") {
         fs::create_dir_all(dirs.data_dir())?;
+        // Like the tasks, the statistics are kept per preset: stats.json or stats.<preset>.json.
+        let stats_path = dirs.data_dir().join(match &preset {
+            Some(preset) => format!("stats.{preset}.json"),
+            None => "stats.json".to_string(),
+        });
+        let (stats, note) = Stats::load(&stats_path);
+        startup_notes.extend(note);
+        app.stats = stats;
+        app.stats_path = Some(stats_path);
         let plugins_dir = dirs.config_dir().join("plugins");
         // Read by other programs (e.g. a Neovim statusline), so the path is predictable.
         let status_file = std::env::var_os("PTC_STATUS_FILE")
@@ -1380,7 +1532,11 @@ fn main() -> io::Result<()> {
     app.shutdown_plugins();
     ratatui::restore();
 
-    // Plugin errors are only shown now, so they don't garble the TUI.
+    // Problems are only shown now, so they don't garble the TUI.
+    app.shutdown_stats();
+    for note in startup_notes.into_iter().chain(app.stats_error.take()) {
+        eprintln!("{note}");
+    }
     if let Some(plugins) = &app.plugins {
         for error in plugins.take_errors() {
             eprintln!("{error}");
@@ -1421,6 +1577,7 @@ mod tests {
         app.action_toggle_pomodoro();
         app.sync_plugins();
         app.tasks.push(Task {
+            id: 0,
             text: "a".into(),
             estimated_pomodoros: 1,
             completed_pomodoros: 0,
@@ -1533,6 +1690,7 @@ mod tests {
         config.pomodoro.auto_complete_tasks = auto_complete_tasks;
         let mut app = App::new(config);
         app.tasks.push(Task {
+            id: 0,
             text: "a".into(),
             estimated_pomodoros: 2,
             completed_pomodoros: 0,
@@ -1570,6 +1728,7 @@ mod tests {
         let mut app = App::new(config);
         for text in ["a", "b"] {
             app.tasks.push(Task {
+                id: 0,
                 text: text.into(),
                 estimated_pomodoros: 3,
                 completed_pomodoros: 0,
@@ -1630,6 +1789,7 @@ mod tests {
 
     fn open_task(text: &str) -> Task {
         Task {
+            id: 0,
             text: text.into(),
             estimated_pomodoros: 2,
             completed_pomodoros: 0,
@@ -1797,5 +1957,113 @@ mod tests {
         assert!(parse_args(args(&["--preset", "a.b"])).is_err());
         assert!(parse_args(args(&["--nope"])).is_err());
         assert!(parse_args(args(&["job"])).is_err());
+    }
+
+    fn press(app: &mut App, code: KeyCode) {
+        app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn the_stats_page_opens_and_closes_with_its_keys_and_only_pomodoro_keys_work_there() {
+        let mut app = App::new(Config::default());
+        press(&mut app, KeyCode::Char('i'));
+        assert!(matches!(app.mode, AppMode::Stats));
+
+        // Task keys do nothing on the page; the pomodoro keys still work.
+        press(&mut app, KeyCode::Char('a'));
+        assert!(matches!(app.mode, AppMode::Stats));
+        press(&mut app, KeyCode::Char('s'));
+        assert!(app.pomodoro_state == PomodoroState::Work);
+
+        press(&mut app, KeyCode::Esc);
+        assert!(matches!(app.mode, AppMode::Normal));
+
+        // The same key opens and closes it, and quit works from the page.
+        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Char('i'));
+        assert!(matches!(app.mode, AppMode::Normal));
+        press(&mut app, KeyCode::Char('i'));
+        press(&mut app, KeyCode::Char('q'));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn tasks_get_unique_stable_ids() {
+        let mut app = App::new(Config::default());
+        for text in ["a", "b", "c"] {
+            app.tasks.push(open_task(text));
+        }
+        app.sync_stats();
+        let ids: Vec<u64> = app.tasks.iter().map(|t| t.id).collect();
+        assert!(ids.iter().all(|&id| id != 0));
+        assert!(ids[0] < ids[1] && ids[1] < ids[2]);
+        app.sync_stats();
+        assert_eq!(ids, app.tasks.iter().map(|t| t.id).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn finished_pomodoros_and_wrong_estimates_are_saved_per_preset_file() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/stats_app");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("stats.job.json");
+
+        let mut config = Config::default();
+        config.pomodoro.notifications = false;
+        let mut app = App::new(config);
+        app.stats_path = Some(path.clone());
+        app.tasks.push(Task { estimated_pomodoros: 1, ..open_task("slow task") });
+        for _ in 0..3 {
+            finish_pomodoro(&mut app);
+        }
+        app.sync_stats();
+
+        let (saved, error) = Stats::load(&path);
+        assert!(error.is_none());
+        assert_eq!(saved.total_pomodoros(), 3);
+        let worst = saved.worst_estimates(10);
+        assert_eq!((worst[0].text.as_str(), worst[0].estimated, worst[0].spent), ("slow task", 1, 3));
+
+        // Clearing the task does not forget it.
+        app.action_clear_all();
+        app.sync_stats();
+        assert_eq!(app.stats.worst_estimates(10).len(), 1);
+        assert!(app.stats_error.is_none());
+    }
+
+    #[test]
+    fn the_stats_page_shows_the_numbers_in_the_theme_colors() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut app = App::new(Config::default());
+        let today = chrono::Local::now().date_naive();
+        app.stats.record_pomodoro(today);
+        app.stats.observe_tasks(&[Task {
+            id: 9,
+            estimated_pomodoros: 1,
+            completed_pomodoros: 4,
+            ..open_task("the slow one")
+        }]);
+        app.mode = AppMode::Stats;
+        app.preset = Some("job".into());
+
+        let mut terminal = Terminal::new(TestBackend::new(130, 36)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let text: String = (0..36)
+            .flat_map(|y| (0..130).map(move |x| (x, y)))
+            .map(|(x, y)| buffer[(x, y)].symbol().to_string())
+            .collect();
+        for expected in ["STATISTICS", "preset job", "MOST WRONG ESTIMATES", "the slow one", "1→4", "+3", "LAST 15 DAYS"] {
+            assert!(text.contains(expected), "missing {expected:?}");
+        }
+        // The task list is not drawn on this page.
+        assert!(!text.contains("TASKS"));
+
+        // The title uses the theme color, not a default one.
+        let title = (0..130)
+            .map(|x| &buffer[(x, 1)])
+            .find(|cell| cell.symbol() == "S")
+            .unwrap();
+        assert_eq!(title.fg, app.config.theme.stats_title);
     }
 }

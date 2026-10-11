@@ -55,6 +55,7 @@ pomodoro or break is active (running, paused or waiting) and stays still while p
 | `+` / `-` | Raise / lower the selected task's estimated pomodoros (minimum 1) |
 | `j` / `k` | Select next / previous task |
 | `Ctrl+j` / `Ctrl+k` | Move the selected task down / up |
+| `i` | Open the statistics page (`Esc` or `i` goes back) |
 | `q` | Quit |
 
 **How pomodoros are counted.** When a work phase ends, the first task that is not done gets one completed
@@ -74,14 +75,35 @@ The hotkey list in the sidebar always shows the keys currently in use, so rebind
 
 Tasks are saved automatically (see [Persistence](#persistence)).
 
+## Statistics
+
+Press `i` to open the statistics page. It takes the place of the task list on the right and `Esc` (or `i`
+again) takes you back. The pomodoro keeps running underneath, and `s`, `p`, `b` and `q` still work on the
+page. It shows all-time numbers:
+
+- **Most wrong estimates:** the 10 tasks that went furthest over their estimate, as a bar (cyan for the
+  estimated part, red to amber for the pomodoros over it, redder for the worse ones), the estimate and the
+  pomodoros really spent (`2→9`) and how many too many (`+7`). A task counts as soon as it is over its
+  estimate (`3/2`), and stays here after you clear or delete it. If you later raise its estimate so it is no
+  longer over, it drops out.
+- **Pomodoros per day:** a bar chart of the finished pomodoros of the last 15 days, blue to violet with
+  the number, today in orange, plus the total, the daily average and the best day.
+
+The numbers are saved in `~/.local/share/ptc/stats.json` (`stats.<preset>.json` with `--preset`, so each
+preset has its own, like its tasks). A pomodoro counts on the day its work phase finished, a stopped one
+does not count. Tasks are remembered by an `id` that ptc adds to your tasks file the first time it runs.
+If `stats.json` cannot be read, it is renamed to `stats.json.corrupt` and a message is printed when you
+quit. All the colours of the page are theme options (`stats_*`, see [Theme](#theme)).
+
 ## Presets
 
 `ptc --preset job` runs ptc with a preset, to keep separate setups, for example work and personal. The
 name is made of letters, digits, `-` and `_`. A preset changes two things, and only through file
 names (no extra folders):
 
-- **Tasks:** they are saved in `tasks.job.json` instead of `tasks.json`, so every preset has its own
-  list. Without `--preset` nothing changes.
+- **Tasks and statistics:** they are saved in `tasks.job.json` and `stats.job.json` instead of
+  `tasks.json` and `stats.json`, so every preset has its own list and its own statistics. Without
+  `--preset` nothing changes.
 - **Configuration:** plugin files named `<name>.<preset>.lua` are loaded only with that preset, right
   after the shared `<name>.lua`. For example, with `~/.config/ptc/plugins/`:
 
@@ -159,6 +181,17 @@ are ignored), a hex value (`"#112233"`) or a 256-color index (`"208"`).
 | `task_marked` | `green` | Marker block of a done task |
 | `task_marked_text` | `black` | The `x` inside a done marker |
 | `task_spinner` | `#d97757` | The animated `✻` before the current task |
+| `stats_title` | `#e0af68` | `STATISTICS` title |
+| `stats_heading` | `#7aa2f7` | Section headings of the statistics page |
+| `stats_label` | `#c0caf5` | Task names and numbers |
+| `stats_dim` | `#565f89` | Secondary text, empty states, days without pomodoros |
+| `stats_estimated` | `#2ac3de` | The estimated part of a bar in the worst estimates |
+| `stats_overrun_worst` | `#f7768e` | The part over the estimate for the worst task; the 10th gets `stats_overrun_mild` and the rest a blend |
+| `stats_overrun_mild` | `#e0af68` | See above |
+| `stats_chart_low` | `#3d59a1` | Bar of a day with few pomodoros; days blend up to `stats_chart_high` |
+| `stats_chart_high` | `#bb9af7` | Bar of the busiest day |
+| `stats_today` | `#ff9e64` | Today's bar and label |
+| `stats_bar_text` | `#1a1b26` | The number drawn on a bar |
 
 ### Keyboard
 
@@ -183,6 +216,8 @@ Supported names: `Enter`, `Esc`, `Tab`, `Backspace`, `Space`, `Up`, `Down`, `Lef
 | `clear_all` | `C` | Clear all tasks |
 | `increase_estimate` | `+` | More estimated pomodoros |
 | `decrease_estimate` | `-` | Fewer estimated pomodoros |
+| `show_stats` | `i` | Open (and close) the statistics page |
+| `close_stats` | `Esc` | Leave the statistics page |
 | `select_next` | `j` | Select next task |
 | `select_previous` | `k` | Select previous task |
 | `move_task_down` | `Ctrl+j` | Move task down |
@@ -249,10 +284,10 @@ Two built-in core plugins are always loaded first: `plugins/core_persist.lua` (s
 | `tasks_changed` | list of tasks | Whenever the task list changes (add, edit, delete, reorder, estimate, done, a pomodoro being credited, ...) |
 | `pomodoro_state_changed` | state table | Whenever the pomodoro starts, stops, pauses, resumes, changes phase, a break becomes ready, or the **current task** changes (see below) |
 
-A task is a table:
+A task is a table (`id` is assigned by ptc, a plugin does not need to set it):
 
 ```lua
-{ text = "Write the README", estimated_pomodoros = 3, completed_pomodoros = 1, done = false }
+{ id = 1791000000000000000, text = "Write the README", estimated_pomodoros = 3, completed_pomodoros = 1, done = false }
 ```
 
 The `pomodoro_state_changed` payload:
