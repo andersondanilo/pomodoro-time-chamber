@@ -18,11 +18,7 @@ local path = ptc.status_file
 local function write(status)
     status.updated_at = os.time()
     -- Temp file + rename, so readers never see a half-written file.
-    local tmp = path .. ".tmp"
-    local file = assert(io.open(tmp, "w"))
-    file:write(ptc.json.encode(status))
-    file:close()
-    assert(os.rename(tmp, path))
+    ptc.write_file(path, ptc.json.encode(status))
 end
 
 ptc.on("startup", function()

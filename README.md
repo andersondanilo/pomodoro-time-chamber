@@ -17,14 +17,32 @@ The goal is not just to track time, but to help you plan, measure, and continuou
 
 ## Install
 
-Download the Linux (x86_64) binary from the [latest release](../../releases/latest):
+Download the binary for your system from the [latest release](../../releases/latest). Each file has a
+`.sha256` file next to it to verify the download.
+
+| System | File |
+| --- | --- |
+| Linux (x86_64) | `ptc-vX.Y.Z-x86_64-linux.tar.gz` |
+| macOS, Apple Silicon | `ptc-vX.Y.Z-aarch64-macos.tar.gz` |
+| macOS, Intel | `ptc-vX.Y.Z-x86_64-macos.tar.gz` |
+| Windows (x86_64) | `ptc-vX.Y.Z-x86_64-windows.zip` |
+
+Linux and macOS:
 
 ```sh
-tar -xzf ptc-v*-x86_64-linux.tar.gz
-install -m755 ptc-v*-x86_64-linux/ptc ~/.local/bin/ptc
+tar -xzf ptc-v*.tar.gz
+install -m755 ptc-v*/ptc ~/.local/bin/ptc
 ```
 
-Each release also has a `.sha256` file to verify the download. Or build it yourself (next section).
+On macOS the first run may be blocked because the binary is not signed; remove the quarantine flag with
+`xattr -d com.apple.quarantine ~/.local/bin/ptc`. On Windows, unzip it and run `ptc.exe` in Windows
+Terminal.
+
+> Linux is the system ptc is developed and tested on. The macOS and Windows builds are produced by the
+> release workflow and should work, but have not been tried by hand; please report problems. The tmux
+> script and the Neovim module read the status file, so they work wherever bash (or Neovim) does.
+
+Or build it yourself (next section).
 
 ## Build and run
 
@@ -268,6 +286,7 @@ Two built-in core plugins are always loaded first: `plugins/core_persist.lua` (s
 | `ptc.on(event, fn)` | Register a handler. An unknown event name is an error. You can register several handlers per event, from several plugins. |
 | `ptc.config(table)` | Merge a partial config (see [Configuration](#configuration)). |
 | `ptc.set_tasks(list)` | Replace the task list. Does not trigger `tasks_changed`. |
+| `ptc.write_file(path, text)` | Writes `text` to `path` through a temporary file and a rename, so a crash never leaves a half-written file. Prefer it to `io.open` + `os.rename`, which cannot replace a file on Windows. |
 | `ptc.json.encode(value)` | Lua value to a pretty-printed JSON string. |
 | `ptc.json.decode(text)` | JSON string to a Lua value. |
 | `ptc.data_dir` | Directory for plugin data, `~/.local/share/ptc` (created for you). |
@@ -386,7 +405,7 @@ the message includes the event name; for load errors, the plugin file name.
 ### Pomodoro in your Neovim statusline
 
 1. **The status file.** The always-on core plugin `plugins/core_status_file.lua` writes the pomodoro
-   state to `$XDG_RUNTIME_DIR/ptc-status.json` (or `/tmp/ptc-status.json`; set `PTC_STATUS_FILE`
+   state to `$XDG_RUNTIME_DIR/ptc-status.json` (or `/tmp/ptc-status.json`, or in the temporary folder on Windows; set `PTC_STATUS_FILE`
    before starting ptc to change it) on startup and on every state change, and `{"state":"off"}`
    when ptc quits. The path is also available to plugins as `ptc.status_file`.
 
@@ -539,8 +558,8 @@ the commit messages on `master`, so they must follow [Conventional Commits](http
 1. release-please keeps a "release PR" open that bumps the version in `Cargo.toml` and updates
    `CHANGELOG.md`.
 2. Merging that PR creates the tag (`vX.Y.Z`) and the GitHub release.
-3. The workflow then builds the Linux binary and attaches `ptc-vX.Y.Z-x86_64-linux.tar.gz` (and its
-   `.sha256`) to the release.
+3. The workflow then builds the binaries (Linux, macOS Apple Silicon and Intel, Windows) and attaches
+   them with their `.sha256` files to the release.
 
 The next version is computed from the commits since the last release: `fix:` bumps the patch
 (`1.0.0` -> `1.0.1`), `feat:` the minor (`1.1.0`) and a breaking change (`feat!:` or a

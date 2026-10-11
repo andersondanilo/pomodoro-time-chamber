@@ -2,7 +2,7 @@ name: Release
 
 # release-please keeps a "release PR" open on master (version bump in Cargo.toml and
 # CHANGELOG.md, built from conventional commits). Merging that PR creates the tag and the
-# GitHub release, and the build job below attaches the Linux binary to it.
+# GitHub release, and the build job below attaches the Linux, macOS and Windows binaries to it.
 on:
   push:
     branches: [master]
@@ -28,33 +28,70 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  build-linux:
+  build:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
-    # An older runner image links against an older glibc, so the binary runs on more distros.
-    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false # one platform failing must not stop the others from being attached
+      matrix:
+        include:
+          - name: x86_64-linux
+            # An older runner image links against an older glibc, so the binary runs on more distros.
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - name: aarch64-macos # Apple Silicon
+            os: macos-14
+            target: aarch64-apple-darwin
+          - name: x86_64-macos # Intel, cross-compiled on the Apple Silicon runner
+            os: macos-14
+            target: x86_64-apple-darwin
+          - name: x86_64-windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
     env:
       TAG: ${{ needs.release-please.outputs.tag_name }}
       GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --locked
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package
         run: |
-          name="ptc-${TAG}-x86_64-linux"
+          name="ptc-${TAG}-${{ matrix.name }}"
           mkdir "$name"
-          cp target/release/ptc README.md "$name/"
-          tar -czf "$name.tar.gz" "$name"
-          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          cp README.md "$name/"
+          if [ "${{ runner.os }}" = Windows ]; then
+            cp "target/${{ matrix.target }}/release/ptc.exe" "$name/"
+            7z a -tzip "$name.zip" "$name" > /dev/null
+            archive="$name.zip"
+          else
+            cp "target/${{ matrix.target }}/release/ptc" "$name/"
+            tar -czf "$name.tar.gz" "$name"
+            archive="$name.tar.gz"
+          fi
+          # `sha256sum` is on Linux and in Git Bash on Windows, `shasum` on macOS.
+          if command -v sha256sum > /dev/null; then
+            sha256sum "$archive" > "$archive.sha256"
+          else
+            shasum -a 256 "$archive" > "$archive.sha256"
+          fi
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
 
       - name: Attach to the release
-        run: gh release upload "$TAG" ptc-*.tar.gz ptc-*.tar.gz.sha256 --clobber
+        run: gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" --clobber

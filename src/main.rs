@@ -1512,9 +1512,16 @@ fn main() -> io::Result<()> {
         let status_file = std::env::var_os("PTC_STATUS_FILE")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
+                // The tmux and Neovim helpers fall back to /tmp too, so keep that on Unix.
                 let dir = std::env::var_os("XDG_RUNTIME_DIR")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/tmp"));
+                    .unwrap_or_else(|| {
+                        if cfg!(windows) {
+                            std::env::temp_dir()
+                        } else {
+                            PathBuf::from("/tmp")
+                        }
+                    });
                 dir.join("ptc-status.json")
             });
         match PluginHost::new(dirs.data_dir(), &plugins_dir, &status_file, preset.as_deref()) {

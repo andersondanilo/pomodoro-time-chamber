@@ -89,6 +89,18 @@ impl PluginHost {
             })?,
         )?;
 
+        // Writes a temporary file and renames it over `path`, so a crash never leaves a half
+        // written file. Done here because Lua's `os.rename` cannot replace a file on Windows.
+        ptc.set(
+            "write_file",
+            lua.create_function(|_, (path, contents): (String, mlua::LuaString)| {
+                let tmp = format!("{path}.tmp");
+                fs::write(&tmp, contents.as_bytes())
+                    .and_then(|()| fs::rename(&tmp, &path))
+                    .map_err(mlua::Error::external)
+            })?,
+        )?;
+
         let json = lua.create_table()?;
         json.set(
             "encode",
@@ -395,5 +407,25 @@ mod tests {
         let host = PluginHost::new(&dir, &dir, &status, Some("job")).unwrap();
         host.emit_empty("startup");
         assert_eq!(host.take_pending_tasks().unwrap()[0].text, "only in job");
+    }
+
+    #[test]
+    fn write_file_replaces_an_existing_file_and_leaves_no_temp_file() {
+        let dir = scratch_dir("write_file");
+        let host = PluginHost::new(&dir, &dir, &dir.join("ptc-status.json"), None).unwrap();
+        let target = dir.join("out.txt");
+        host.load_source(
+            "writer",
+            &format!(
+                r#"ptc.write_file("{0}", "first"); ptc.write_file("{0}", "second")"#,
+                target.display()
+            ),
+        );
+        assert!(host.take_errors().is_empty(), "{:?}", host.take_errors());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "second");
+        assert!(!dir.join("out.txt.tmp").exists());
+
+        host.load_source("bad", r#"ptc.write_file("/definitely/not/a/dir/x", "x")"#);
+        assert_eq!(host.take_errors().len(), 1, "a failed write is an error, not a crash");
     }
 }

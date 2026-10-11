@@ -14,10 +14,6 @@ ptc.on("startup", function()
 end)
 
 ptc.on("tasks_changed", function(tasks)
-    -- Write to a temp file first so a crash never leaves a half-written list.
-    local tmp = path .. ".tmp"
-    local file = assert(io.open(tmp, "w"))
-    file:write(ptc.json.encode(tasks))
-    file:close()
-    assert(os.rename(tmp, path))
+    -- Written through a temp file, so a crash never leaves a half-written list.
+    ptc.write_file(path, ptc.json.encode(tasks))
 end)
