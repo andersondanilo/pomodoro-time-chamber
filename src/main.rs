@@ -60,6 +60,10 @@ struct Theme {
     task_marked_text: Color,
     /// The animated `✻` before the current task.
     task_spinner: Color,
+    /// `TASKS` title of the task list.
+    tasks_title: Color,
+    /// The preset next to that title.
+    tasks_title_dim: Color,
     /// Statistics page.
     stats_title: Color,
     stats_heading: Color,
@@ -102,6 +106,8 @@ impl Default for Theme {
             task_marked: Color::Green,
             task_marked_text: Color::Black,
             task_spinner: Color::Rgb(0xd9, 0x77, 0x57),
+            tasks_title: Color::Rgb(0xe0, 0xaf, 0x68),
+            tasks_title_dim: Color::Rgb(0x56, 0x5f, 0x89),
             stats_title: Color::Rgb(0xe0, 0xaf, 0x68),
             stats_heading: Color::Rgb(0x7a, 0xa2, 0xf7),
             stats_label: Color::Rgb(0xc0, 0xca, 0xf5),
@@ -966,10 +972,18 @@ impl App {
 
         let [title_area, tasks_area] =
             Layout::vertical([Constraint::Length(2), Constraint::Fill(1)]).areas(inner);
-        frame.render_widget(
-            Paragraph::new("TASKS").style(Style::new().bold()),
-            title_area,
-        );
+        let theme = &self.config.theme;
+        let mut title = vec![Span::styled(
+            "TASKS",
+            Style::new().fg(theme.tasks_title).bold(),
+        )];
+        if let Some(preset) = &self.preset {
+            title.push(Span::styled(
+                format!("  ·  preset {preset}"),
+                Style::new().fg(theme.tasks_title_dim),
+            ));
+        }
+        frame.render_widget(Paragraph::new(Line::from(title)), title_area);
 
         let editing = matches!(self.mode, AppMode::TaskTextInput);
         // The current task is the first one that is not done.
@@ -2123,5 +2137,42 @@ mod tests {
             .find(|cell| cell.symbol() == "S")
             .unwrap();
         assert_eq!(title.fg, app.config.theme.stats_title);
+    }
+
+    #[test]
+    fn the_tasks_title_is_colored_and_shows_the_preset() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut app = App::new(Config::default());
+        let draw = |app: &mut App| {
+            let mut terminal = Terminal::new(TestBackend::new(130, 20)).unwrap();
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            terminal.backend().buffer().clone()
+        };
+        let row = |buffer: &ratatui::buffer::Buffer, y: u16| -> String {
+            (40..130)
+                .map(|x| buffer[(x, y)].symbol().to_string())
+                .collect()
+        };
+
+        let buffer = draw(&mut app);
+        let line = row(&buffer, 1);
+        assert!(
+            line.contains("TASKS") && !line.contains("preset"),
+            "{line:?}"
+        );
+        let title_cell = (40..130)
+            .map(|x| &buffer[(x, 1)])
+            .find(|cell| cell.symbol() == "T")
+            .unwrap();
+        assert_eq!(title_cell.fg, app.config.theme.tasks_title);
+
+        app.preset = Some("job".into());
+        let buffer = draw(&mut app);
+        assert!(row(&buffer, 1).contains("TASKS  ·  preset job"));
+        let preset_cell = (40..130)
+            .map(|x| &buffer[(x, 1)])
+            .find(|cell| cell.symbol() == "j")
+            .unwrap();
+        assert_eq!(preset_cell.fg, app.config.theme.tasks_title_dim);
     }
 }

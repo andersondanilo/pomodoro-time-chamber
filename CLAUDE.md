@@ -42,7 +42,7 @@ Terminal pomodoro + task list app in Rust (edition 2024), built on `ratatui` (cr
 ## Conventions / preferences
 - **No color may be hardcoded, not even one.** Every color (including `Color::Red`, `Color::White`, RGB values, etc.) must be a field of `Theme`, with its default defined only in `Theme::default()`. Never write a color literal in drawing code.
 - No borders; sections are separated by different background colors (`theme.background` vs `theme.panel_background`).
-- Panel title is `TASKS`: bold, uppercase, no `|` decorations.
+- Panel title is `TASKS`: bold, uppercase, no `|` decorations, in `theme.tasks_title` (yellow, like `STATISTICS`), followed by the preset in `theme.tasks_title_dim` when `--preset` is used (`TASKS  ·  preset job`), same layout as the statistics title.
 - Sidebar padding is 3 columns left and right; tasks panel uses its own padding.
 - Task marker is a 3-column colored block (no brackets): background (`theme.task_unmarked`, defaults to the same color as `theme.background`, the left column) when open, green background (`theme.task_marked`) with a bold `x` in the middle (`theme.task_marked_text`) when done; only the marker is colored, built by `App::task_line`.
 - Art strings start with a `\n`, so the first row of each digit is blank; `clock_lines` relies on that (6 rows). Every art row must be at most `NUMBER_WIDTH` (6) columns wide: `clock_lines` trims trailing spaces and pads to 6, and the `every_clock_row_has_the_same_width` test renders all `MM:SS` to catch a misaligned glyph.

@@ -199,6 +199,8 @@ are ignored), a hex value (`"#112233"`) or a 256-color index (`"208"`).
 | `task_marked` | `green` | Marker block of a done task |
 | `task_marked_text` | `black` | The `x` inside a done marker |
 | `task_spinner` | `#d97757` | The animated `✻` before the current task |
+| `tasks_title` | `#e0af68` | `TASKS` title of the task list |
+| `tasks_title_dim` | `#565f89` | The preset shown next to that title (`TASKS  ·  preset job`) |
 | `stats_title` | `#e0af68` | `STATISTICS` title |
 | `stats_heading` | `#7aa2f7` | Section headings of the statistics page |
 | `stats_label` | `#c0caf5` | Task names and numbers |
