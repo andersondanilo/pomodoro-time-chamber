@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/andersondanilo/pomodoro-time-chamber/compare/v1.3.0...v1.4.0) (2026-10-11)
+
+
+### Features
+
+* add a statistics page with the worst estimates and pomodoros per day ([258f738](https://github.com/andersondanilo/pomodoro-time-chamber/commit/258f7380be637e6300caf1d94156a7901619865b))
+* release macOS and Windows binaries and make file writes portable ([5e10c0e](https://github.com/andersondanilo/pomodoro-time-chamber/commit/5e10c0e6f72f850e1808b858d27d2cdf0a2fafaf))
+
 ## [1.3.0](https://github.com/andersondanilo/pomodoro-time-chamber/compare/v1.2.0...v1.3.0) (2026-10-09)
 
 
