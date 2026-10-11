@@ -15,6 +15,12 @@ The app is also extensible with Lua, allowing you to create custom plugins and i
 
 The goal is not just to track time, but to help you plan, measure, and continuously improve your ability to manage it.
 
+## Why "Time Chamber"?
+
+The name comes from the Hyperbolic Time Chamber of Dragon Ball, a room where time passes much faster
+inside than outside, so a fighter can train for a year in a single day. The hope is the same here:
+step into the chamber, focus, and you will become more productive and get more done in less time.
+
 ## Install
 
 Download the binary for your system from the [latest release](../../releases/latest). Each file has a

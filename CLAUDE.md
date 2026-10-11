@@ -2,6 +2,8 @@
 
 Terminal pomodoro + task list app in Rust (edition 2024), built on `ratatui` (crossterm backend).
 
+The name comes from the Hyperbolic Time Chamber of Dragon Ball (time passes faster inside, so you get more done in less time); the README explains it under "Why "Time Chamber"?".
+
 ## Commands
 - `cargo build` / `cargo run`. The binary is named `ptc` (`[[bin]]` in `Cargo.toml`); the package name stays `pomodoro-time-chamber`.
 - CI (`.github/workflows/ci.yml`) runs `cargo test --locked`, `cargo fmt --check` and `cargo clippy --all-targets --locked -- -D warnings` on every push and pull request, so run all three before committing (`cargo fmt` fixes formatting). CI uses the latest stable Rust, so a new clippy lint can fail it without any change here.
