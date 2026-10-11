@@ -590,7 +590,11 @@ A classic token with the `repo` scope also works.
 ## Development
 
 ```sh
-cargo test    # plugin host, config merging and key parsing tests
+cargo test                                   # all the tests
+cargo fmt --check                            # formatting
+cargo clippy --all-targets -- -D warnings    # lint
 ```
+
+The same three checks run in CI (`.github/workflows/ci.yml`) on every push and pull request, and must pass.
 
 Architecture notes and project conventions are in [`CLAUDE.md`](CLAUDE.md).

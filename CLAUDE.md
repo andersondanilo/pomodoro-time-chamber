@@ -4,6 +4,7 @@ Terminal pomodoro + task list app in Rust (edition 2024), built on `ratatui` (cr
 
 ## Commands
 - `cargo build` / `cargo run`. The binary is named `ptc` (`[[bin]]` in `Cargo.toml`); the package name stays `pomodoro-time-chamber`.
+- CI (`.github/workflows/ci.yml`) runs `cargo test --locked`, `cargo fmt --check` and `cargo clippy --all-targets --locked -- -D warnings` on every push and pull request, so run all three before committing (`cargo fmt` fixes formatting). CI uses the latest stable Rust, so a new clippy lint can fail it without any change here.
 - `cargo test`: plugin host tests (`src/plugins.rs`) and an App-level event test (`src/main.rs`); they write under `target/test-tmp/`.
 
 ## Layout
