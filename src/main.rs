@@ -60,6 +60,8 @@ struct Theme {
     task_marked_text: Color,
     /// The animated `✻` before the current task.
     task_spinner: Color,
+    /// "Quit ptc?" question that replaces the hotkey list.
+    quit_prompt: Color,
     /// `TASKS` title of the task list.
     tasks_title: Color,
     /// The preset next to that title.
@@ -106,6 +108,7 @@ impl Default for Theme {
             task_marked: Color::Green,
             task_marked_text: Color::Black,
             task_spinner: Color::Rgb(0xd9, 0x77, 0x57),
+            quit_prompt: Color::Rgb(0xf7, 0x76, 0x8e),
             tasks_title: Color::Rgb(0xe0, 0xaf, 0x68),
             tasks_title_dim: Color::Rgb(0x56, 0x5f, 0x89),
             stats_title: Color::Rgb(0xe0, 0xaf, 0x68),
@@ -278,6 +281,8 @@ struct Keyboard {
     clear_all: KeyBinding,
     increase_estimate: KeyBinding,
     decrease_estimate: KeyBinding,
+    confirm_quit: KeyBinding,
+    cancel_quit: KeyBinding,
     show_stats: KeyBinding,
     close_stats: KeyBinding,
     select_next: KeyBinding,
@@ -303,6 +308,8 @@ impl Default for Keyboard {
             clear_all: KeyBinding::plain(KeyCode::Char('C')),
             increase_estimate: KeyBinding::plain(KeyCode::Char('+')),
             decrease_estimate: KeyBinding::plain(KeyCode::Char('-')),
+            confirm_quit: KeyBinding::plain(KeyCode::Char('y')),
+            cancel_quit: KeyBinding::plain(KeyCode::Char('n')),
             show_stats: KeyBinding::plain(KeyCode::Char('i')),
             close_stats: KeyBinding::plain(KeyCode::Esc),
             select_next: KeyBinding::plain(KeyCode::Char('j')),
@@ -490,6 +497,8 @@ struct App {
     /// Index of the task being edited; `None` when adding a new one.
     editing_task: Option<usize>,
     should_quit: bool,
+    /// "Quit ptc?" is on screen, waiting for yes or no.
+    quit_pending: bool,
     pomodoro_state: PomodoroState,
     /// When the current phase ends; `None` while idle.
     phase_ends_at: Option<Instant>,
@@ -532,6 +541,7 @@ impl App {
             started_at: Instant::now(),
             editing_task: None,
             should_quit: false,
+            quit_pending: false,
             pomodoro_state: PomodoroState::Idle,
             phase_ends_at: None,
             paused_remaining: None,
@@ -1139,6 +1149,20 @@ impl App {
         );
 
         let keyboard = &self.config.keyboard;
+        if self.quit_pending {
+            let [question_area, answers_area] =
+                Layout::vertical([Constraint::Length(2), Constraint::Fill(1)]).areas(hotkeys_area);
+            frame.render_widget(
+                Paragraph::new("Quit ptc?")
+                    .style(Style::new().fg(self.config.theme.quit_prompt).bold()),
+                question_area,
+            );
+            let answers = vec![
+                (keyboard.confirm_quit, "Yes, quit"),
+                (keyboard.cancel_quit, "No, stay"),
+            ];
+            return self.render_hotkeys(frame, answers, answers_area);
+        }
         let hotkeys = match self.mode {
             AppMode::Normal | AppMode::Stats => {
                 let stats_open = matches!(self.mode, AppMode::Stats);
@@ -1215,9 +1239,20 @@ impl App {
 
     fn handle_key(&mut self, key: KeyEvent) {
         let keyboard = &self.config.keyboard;
+
+        // While the question is on screen it takes every key: the quit key again also means yes.
+        if self.quit_pending {
+            if keyboard.confirm_quit.matches(&key) || keyboard.quit.matches(&key) {
+                self.should_quit = true;
+            } else if keyboard.cancel_quit.matches(&key) || keyboard.cancel_task.matches(&key) {
+                self.quit_pending = false;
+            }
+            return;
+        }
+
         match self.mode {
             AppMode::Normal => match key.code {
-                _ if keyboard.quit.matches(&key) => self.should_quit = true,
+                _ if keyboard.quit.matches(&key) => self.quit_pending = true,
                 _ if keyboard.toggle_pomodoro.matches(&key) => self.action_toggle_pomodoro(),
                 _ if keyboard.pause_pomodoro.matches(&key) => self.action_pause_pomodoro(),
                 _ if keyboard.skip_break.matches(&key) => self.action_skip_break(),
@@ -1241,7 +1276,7 @@ impl App {
                 _ if keyboard.close_stats.matches(&key) || keyboard.show_stats.matches(&key) => {
                     self.mode = AppMode::Normal
                 }
-                _ if keyboard.quit.matches(&key) => self.should_quit = true,
+                _ if keyboard.quit.matches(&key) => self.quit_pending = true,
                 _ if keyboard.toggle_pomodoro.matches(&key) => self.action_toggle_pomodoro(),
                 _ if keyboard.pause_pomodoro.matches(&key) => self.action_pause_pomodoro(),
                 _ if keyboard.skip_break.matches(&key) => self.action_skip_break(),
@@ -2041,7 +2076,66 @@ mod tests {
         assert!(matches!(app.mode, AppMode::Normal));
         press(&mut app, KeyCode::Char('i'));
         press(&mut app, KeyCode::Char('q'));
+        assert!(app.quit_pending && !app.should_quit, "quitting asks first");
+        press(&mut app, KeyCode::Char('y'));
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn quitting_needs_a_confirmation_that_can_be_cancelled() {
+        let mut app = App::new(Config::default());
+
+        // Cancelled with n, then with Esc.
+        for cancel in [KeyCode::Char('n'), KeyCode::Esc] {
+            press(&mut app, KeyCode::Char('q'));
+            assert!(app.quit_pending);
+            press(&mut app, cancel);
+            assert!(!app.quit_pending && !app.should_quit);
+        }
+
+        // While asking, other keys do nothing (they must not reach the task list or the timer).
+        press(&mut app, KeyCode::Char('q'));
+        press(&mut app, KeyCode::Char('a'));
+        press(&mut app, KeyCode::Char('s'));
+        assert!(app.quit_pending && !app.should_quit);
+        assert!(matches!(app.mode, AppMode::Normal));
+        assert!(app.pomodoro_state == PomodoroState::Idle);
+
+        // The quit key again confirms, like y.
+        press(&mut app, KeyCode::Char('q'));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn the_quit_question_replaces_the_hotkey_list_and_is_colored() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut app = App::new(Config::default());
+        let render = |app: &mut App| {
+            let mut terminal = Terminal::new(TestBackend::new(130, 36)).unwrap();
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            let text: String = (0..36)
+                .flat_map(|y| (0..40).map(move |x| (x, y)))
+                .map(|(x, y)| buffer[(x, y)].symbol().to_string())
+                .collect();
+            (buffer, text)
+        };
+
+        let (_, text) = render(&mut app);
+        assert!(text.contains("Add new task") && !text.contains("Quit ptc?"));
+
+        app.quit_pending = true;
+        let (buffer, text) = render(&mut app);
+        for expected in ["Quit ptc?", "Yes, quit", "No, stay"] {
+            assert!(text.contains(expected), "missing {expected:?}");
+        }
+        assert!(!text.contains("Add new task"));
+        let question = (0..40)
+            .flat_map(|x| (0..36).map(move |y| (x, y)))
+            .map(|(x, y)| &buffer[(x, y)])
+            .find(|cell| cell.symbol() == "Q")
+            .unwrap();
+        assert_eq!(question.fg, app.config.theme.quit_prompt);
     }
 
     #[test]

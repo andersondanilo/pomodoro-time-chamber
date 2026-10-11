@@ -74,7 +74,7 @@ pomodoro or break is active (running, paused or waiting) and stays still while p
 | `j` / `k` | Select next / previous task |
 | `Ctrl+j` / `Ctrl+k` | Move the selected task down / up |
 | `i` | Open the statistics page (`Esc` or `i` goes back) |
-| `q` | Quit |
+| `q` | Quit (asks first: `y` or `q` again to quit, `n` or `Esc` to stay) |
 
 **How pomodoros are counted.** When a work phase ends, the first task that is not done gets one completed
 pomodoro. If you mark a task as done with `x` while a work phase is running (or paused) and **more than
@@ -199,6 +199,7 @@ are ignored), a hex value (`"#112233"`) or a 256-color index (`"208"`).
 | `task_marked` | `green` | Marker block of a done task |
 | `task_marked_text` | `black` | The `x` inside a done marker |
 | `task_spinner` | `#d97757` | The animated `✻` before the current task |
+| `quit_prompt` | `#f7768e` | The "Quit ptc?" question |
 | `tasks_title` | `#e0af68` | `TASKS` title of the task list |
 | `tasks_title_dim` | `#565f89` | The preset shown next to that title (`TASKS  ·  preset job`) |
 | `stats_title` | `#e0af68` | `STATISTICS` title |
@@ -236,6 +237,8 @@ Supported names: `Enter`, `Esc`, `Tab`, `Backspace`, `Space`, `Up`, `Down`, `Lef
 | `clear_all` | `C` | Clear all tasks |
 | `increase_estimate` | `+` | More estimated pomodoros |
 | `decrease_estimate` | `-` | Fewer estimated pomodoros |
+| `confirm_quit` | `y` | Answer yes to "Quit ptc?" (the quit key again also quits) |
+| `cancel_quit` | `n` | Answer no to "Quit ptc?" (`Esc` too, as `cancel_task`) |
 | `show_stats` | `i` | Open (and close) the statistics page |
 | `close_stats` | `Esc` | Leave the statistics page |
 | `select_next` | `j` | Select next task |
