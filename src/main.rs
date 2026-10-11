@@ -615,7 +615,7 @@ impl App {
                     }
                 }
                 let interval = self.config.pomodoro.long_break_interval.max(1);
-                let next = if self.completed_pomodoros % interval == 0 {
+                let next = if self.completed_pomodoros.is_multiple_of(interval) {
                     PomodoroState::LongBreak
                 } else {
                     PomodoroState::ShortBreak
@@ -714,10 +714,10 @@ impl App {
         }
         if self.stats_dirty {
             self.stats_dirty = false;
-            if let Some(path) = &self.stats_path {
-                if let Err(err) = self.stats.save(path) {
-                    self.stats_error = Some(format!("stats: could not save {}: {err}", path.display()));
-                }
+            if let Some(path) = &self.stats_path
+                && let Err(err) = self.stats.save(path)
+            {
+                self.stats_error = Some(format!("stats: could not save {}: {err}", path.display()));
             }
         }
     }
@@ -897,7 +897,7 @@ impl App {
         let mut total = self.phase_duration(PomodoroState::Work) * pending;
         // A break follows every pomodoro except the last one.
         for i in 1..pending {
-            let state = if (self.completed_pomodoros + i) % interval == 0 {
+            let state = if (self.completed_pomodoros + i).is_multiple_of(interval) {
                 PomodoroState::LongBreak
             } else {
                 PomodoroState::ShortBreak
