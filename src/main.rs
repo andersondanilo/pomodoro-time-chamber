@@ -7,7 +7,6 @@ use std::{
 };
 
 use plugins::PluginHost;
-use stats::Stats;
 use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -16,6 +15,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
+use stats::Stats;
 
 mod number_ascii_art;
 mod plugins;
@@ -126,11 +126,17 @@ struct KeyBinding {
 
 impl KeyBinding {
     fn plain(code: KeyCode) -> Self {
-        KeyBinding { code, modifiers: KeyModifiers::NONE }
+        KeyBinding {
+            code,
+            modifiers: KeyModifiers::NONE,
+        }
     }
 
     fn ctrl(code: KeyCode) -> Self {
-        KeyBinding { code, modifiers: KeyModifiers::CONTROL }
+        KeyBinding {
+            code,
+            modifiers: KeyModifiers::CONTROL,
+        }
     }
 
     /// SHIFT is ignored: it is already reflected in the character (`+`, `J`).
@@ -173,7 +179,9 @@ impl std::str::FromStr for KeyBinding {
                 rest.get(..prefix.len())
                     .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
             });
-            let Some((prefix, modifier)) = found else { break };
+            let Some((prefix, modifier)) = found else {
+                break;
+            };
             modifiers |= *modifier;
             rest = &rest[prefix.len()..];
         }
@@ -603,7 +611,8 @@ impl App {
         match self.pomodoro_state {
             PomodoroState::Work => {
                 self.completed_pomodoros += 1;
-                self.stats.record_pomodoro(chrono::Local::now().date_naive());
+                self.stats
+                    .record_pomodoro(chrono::Local::now().date_naive());
                 self.stats_dirty = true;
                 let auto_complete = self.config.pomodoro.auto_complete_tasks;
                 let already_credited = self.work_credited;
@@ -663,7 +672,10 @@ impl App {
             format!("{label} (ready)")
         } else if self.is_paused() {
             format!("{label} (paused)")
-        } else if let Some(since) = self.idle_since.filter(|_| self.pomodoro_state == PomodoroState::Idle) {
+        } else if let Some(since) = self
+            .idle_since
+            .filter(|_| self.pomodoro_state == PomodoroState::Idle)
+        {
             format!("{label} for {}", format_elapsed(since.elapsed()))
         } else {
             label.to_string()
@@ -875,10 +887,7 @@ impl App {
         Line::from(vec![
             Span::styled(marker, style),
             Span::raw(" "),
-            Span::styled(
-                spinner.unwrap_or(" "),
-                Style::new().fg(theme.task_spinner),
-            ),
+            Span::styled(spinner.unwrap_or(" "), Style::new().fg(theme.task_spinner)),
             Span::raw(format!(" {text}")),
         ])
     }
@@ -890,7 +899,10 @@ impl App {
             .tasks
             .iter()
             .filter(|task| !task.done)
-            .map(|task| task.estimated_pomodoros.saturating_sub(task.completed_pomodoros))
+            .map(|task| {
+                task.estimated_pomodoros
+                    .saturating_sub(task.completed_pomodoros)
+            })
             .sum();
 
         let interval = self.config.pomodoro.long_break_interval.max(1);
@@ -954,7 +966,10 @@ impl App {
 
         let [title_area, tasks_area] =
             Layout::vertical([Constraint::Length(2), Constraint::Fill(1)]).areas(inner);
-        frame.render_widget(Paragraph::new("TASKS").style(Style::new().bold()), title_area);
+        frame.render_widget(
+            Paragraph::new("TASKS").style(Style::new().bold()),
+            title_area,
+        );
 
         let editing = matches!(self.mode, AppMode::TaskTextInput);
         // The current task is the first one that is not done.
@@ -980,7 +995,11 @@ impl App {
 
         // Scroll just enough to keep the cursor row (selected task or new task) visible.
         let height = tasks_area.height as usize;
-        let cursor = if adding { self.tasks.len() } else { self.selected_task };
+        let cursor = if adding {
+            self.tasks.len()
+        } else {
+            self.selected_task
+        };
         if cursor < self.scroll_offset {
             self.scroll_offset = cursor;
         } else if height > 0 && cursor >= self.scroll_offset + height {
@@ -1012,10 +1031,7 @@ impl App {
                 continue;
             }
             let task = &self.tasks[index];
-            let counter = format!(
-                "{}/{}",
-                task.completed_pomodoros, task.estimated_pomodoros
-            );
+            let counter = format!("{}/{}", task.completed_pomodoros, task.estimated_pomodoros);
             frame.render_widget(Paragraph::new(counter).right_aligned(), row_at(index));
         }
 
@@ -1103,8 +1119,8 @@ impl App {
             .bg(self.status_color());
         frame.render_widget(
             Paragraph::new(self.status_text())
-            .centered()
-            .style(status_style),
+                .centered()
+                .style(status_style),
             status_area,
         );
 
@@ -1308,8 +1324,10 @@ impl App {
 
     fn action_decrease_estimate(&mut self) {
         if let Some(task) = self.tasks.get_mut(self.selected_task) {
-            task.estimated_pomodoros =
-                task.estimated_pomodoros.saturating_sub(1).max(MIN_ESTIMATED_POMODOROS);
+            task.estimated_pomodoros = task
+                .estimated_pomodoros
+                .saturating_sub(1)
+                .max(MIN_ESTIMATED_POMODOROS);
         }
     }
 
@@ -1524,7 +1542,12 @@ fn main() -> io::Result<()> {
                     });
                 dir.join("ptc-status.json")
             });
-        match PluginHost::new(dirs.data_dir(), &plugins_dir, &status_file, preset.as_deref()) {
+        match PluginHost::new(
+            dirs.data_dir(),
+            &plugins_dir,
+            &status_file,
+            preset.as_deref(),
+        ) {
             Ok(host) => {
                 host.load_user_plugins();
                 app.plugins = Some(host);
@@ -1676,9 +1699,15 @@ mod tests {
         let plain_j: KeyBinding = "j".parse().unwrap();
         assert!(!plain_j.matches(&event));
         assert_eq!("Enter".parse::<KeyBinding>().unwrap().code, KeyCode::Enter);
-        assert_eq!("space".parse::<KeyBinding>().unwrap().code, KeyCode::Char(' '));
+        assert_eq!(
+            "space".parse::<KeyBinding>().unwrap().code,
+            KeyCode::Char(' ')
+        );
         assert_eq!("F5".parse::<KeyBinding>().unwrap().code, KeyCode::F(5));
-        assert_eq!("Ctrl++".parse::<KeyBinding>().unwrap().code, KeyCode::Char('+'));
+        assert_eq!(
+            "Ctrl++".parse::<KeyBinding>().unwrap().code,
+            KeyCode::Char('+')
+        );
         assert!("".parse::<KeyBinding>().is_err());
         assert!("bogus".parse::<KeyBinding>().is_err());
     }
@@ -1817,7 +1846,10 @@ mod tests {
             "#,
         );
         let log = |app: &App| -> String {
-            app.plugins.as_ref().unwrap().eval_for_test(r#"return table.concat(log, " ")"#)
+            app.plugins
+                .as_ref()
+                .unwrap()
+                .eval_for_test(r#"return table.concat(log, " ")"#)
         };
 
         // No task: no event. Adding "a" makes it current.
@@ -1949,11 +1981,15 @@ mod tests {
         assert_eq!(parse_args(args(&[])), Ok(Cli::Run { preset: None }));
         assert_eq!(
             parse_args(args(&["--preset", "job"])),
-            Ok(Cli::Run { preset: Some("job".into()) })
+            Ok(Cli::Run {
+                preset: Some("job".into())
+            })
         );
         assert_eq!(
             parse_args(args(&["--preset=side-project_2"])),
-            Ok(Cli::Run { preset: Some("side-project_2".into()) })
+            Ok(Cli::Run {
+                preset: Some("side-project_2".into())
+            })
         );
         assert_eq!(parse_args(args(&["--help"])), Ok(Cli::Help));
         assert_eq!(parse_args(args(&["-V"])), Ok(Cli::Version));
@@ -2010,7 +2046,8 @@ mod tests {
 
     #[test]
     fn finished_pomodoros_and_wrong_estimates_are_saved_per_preset_file() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/stats_app");
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp/stats_app");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("stats.job.json");
@@ -2019,7 +2056,10 @@ mod tests {
         config.pomodoro.notifications = false;
         let mut app = App::new(config);
         app.stats_path = Some(path.clone());
-        app.tasks.push(Task { estimated_pomodoros: 1, ..open_task("slow task") });
+        app.tasks.push(Task {
+            estimated_pomodoros: 1,
+            ..open_task("slow task")
+        });
         for _ in 0..3 {
             finish_pomodoro(&mut app);
         }
@@ -2029,7 +2069,10 @@ mod tests {
         assert!(error.is_none());
         assert_eq!(saved.total_pomodoros(), 3);
         let worst = saved.worst_estimates(10);
-        assert_eq!((worst[0].text.as_str(), worst[0].estimated, worst[0].spent), ("slow task", 1, 3));
+        assert_eq!(
+            (worst[0].text.as_str(), worst[0].estimated, worst[0].spent),
+            ("slow task", 1, 3)
+        );
 
         // Clearing the task does not forget it.
         app.action_clear_all();
@@ -2060,7 +2103,15 @@ mod tests {
             .flat_map(|y| (0..130).map(move |x| (x, y)))
             .map(|(x, y)| buffer[(x, y)].symbol().to_string())
             .collect();
-        for expected in ["STATISTICS", "preset job", "MOST WRONG ESTIMATES", "the slow one", "1→4", "+3", "LAST 15 DAYS"] {
+        for expected in [
+            "STATISTICS",
+            "preset job",
+            "MOST WRONG ESTIMATES",
+            "the slow one",
+            "1→4",
+            "+3",
+            "LAST 15 DAYS",
+        ] {
             assert!(text.contains(expected), "missing {expected:?}");
         }
         // The task list is not drawn on this page.

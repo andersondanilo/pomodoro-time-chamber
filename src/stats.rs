@@ -71,7 +71,10 @@ impl Stats {
 
     /// A work phase finished on `day`.
     pub fn record_pomodoro(&mut self, day: NaiveDate) {
-        *self.days.entry(day.format(DAY_FORMAT).to_string()).or_insert(0) += 1;
+        *self
+            .days
+            .entry(day.format(DAY_FORMAT).to_string())
+            .or_insert(0) += 1;
     }
 
     /// Updates the overruns from the live task list; returns whether anything changed.
@@ -167,7 +170,11 @@ mod tests {
     #[test]
     fn only_tasks_over_their_estimate_are_remembered_and_they_outlive_the_list() {
         let mut stats = Stats::default();
-        let mut tasks = vec![task(1, "fine", 3, 3), task(2, "slow", 2, 5), task(3, "late", 1, 2)];
+        let mut tasks = vec![
+            task(1, "fine", 3, 3),
+            task(2, "slow", 2, 5),
+            task(3, "late", 1, 2),
+        ];
         assert!(stats.observe_tasks(&tasks));
         assert!(!stats.observe_tasks(&tasks), "nothing new the second time");
 

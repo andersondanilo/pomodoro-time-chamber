@@ -20,7 +20,10 @@ const BOOTSTRAP: &str = include_str!("../plugins/bootstrap.lua");
 /// Always loaded, in this order, before the user's plugins.
 const CORE_PLUGINS: [(&str, &str); 2] = [
     ("core.persist", include_str!("../plugins/core_persist.lua")),
-    ("core.status_file", include_str!("../plugins/core_status_file.lua")),
+    (
+        "core.status_file",
+        include_str!("../plugins/core_status_file.lua"),
+    ),
 ];
 
 pub struct PluginHost {
@@ -162,7 +165,11 @@ impl PluginHost {
         plugins.sort_by(|a, b| (&a.0, a.1.is_some()).cmp(&(&b.0, b.1.is_some())));
 
         for (_, _, file) in plugins {
-            let name = file.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+            let name = file
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
             match fs::read_to_string(&file) {
                 Ok(source) => self.load_source(&name, &source),
                 Err(err) => self.report(format!("plugin {name}: {err}")),
@@ -230,7 +237,9 @@ mod tests {
     }
 
     fn scratch_dir(name: &str) -> PathBuf {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp").join(name);
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/test-tmp")
+            .join(name);
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -360,10 +369,22 @@ mod tests {
             #[serde(skip_serializing_if = "Option::is_none")]
             idle_since: Option<u64>,
         }
-        host.emit("pomodoro_state_changed", &IdleEvent { state: "idle", idle_since: Some(1_800_000_100) });
+        host.emit(
+            "pomodoro_state_changed",
+            &IdleEvent {
+                state: "idle",
+                idle_since: Some(1_800_000_100),
+            },
+        );
         assert_eq!(read()["state"], "idle");
         assert_eq!(read()["idle_since"], 1_800_000_100u64);
-        host.emit("pomodoro_state_changed", &IdleEvent { state: "idle", idle_since: None });
+        host.emit(
+            "pomodoro_state_changed",
+            &IdleEvent {
+                state: "idle",
+                idle_since: None,
+            },
+        );
         assert!(read().get("idle_since").is_none());
 
         host.emit_empty("quit");
@@ -402,7 +423,10 @@ mod tests {
         assert_eq!(host.eval_for_test("return tostring(ptc.preset)"), "nil");
         assert_eq!(host.eval_for_test("return log"), "a,c,");
         host.emit_empty("startup");
-        assert!(host.take_pending_tasks().is_none(), "the default tasks file is separate");
+        assert!(
+            host.take_pending_tasks().is_none(),
+            "the default tasks file is separate"
+        );
 
         let host = PluginHost::new(&dir, &dir, &status, Some("job")).unwrap();
         host.emit_empty("startup");
@@ -426,6 +450,10 @@ mod tests {
         assert!(!dir.join("out.txt.tmp").exists());
 
         host.load_source("bad", r#"ptc.write_file("/definitely/not/a/dir/x", "x")"#);
-        assert_eq!(host.take_errors().len(), 1, "a failed write is an error, not a crash");
+        assert_eq!(
+            host.take_errors().len(),
+            1,
+            "a failed write is an error, not a crash"
+        );
     }
 }

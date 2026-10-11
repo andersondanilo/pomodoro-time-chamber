@@ -21,7 +21,8 @@ pub const CHART_DAYS: usize = 15;
 fn blend(from: Color, to: Color, t: f64) -> Color {
     match (from, to) {
         (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => {
-            let mix = |a: u8, b: u8| (a as f64 + (b as f64 - a as f64) * t.clamp(0.0, 1.0)).round() as u8;
+            let mix =
+                |a: u8, b: u8| (a as f64 + (b as f64 - a as f64) * t.clamp(0.0, 1.0)).round() as u8;
             Color::Rgb(mix(r1, r2), mix(g1, g2), mix(b1, b2))
         }
         _ => from,
@@ -34,7 +35,11 @@ fn fit(text: &str, width: usize) -> String {
     let mut out = String::new();
     let mut used = 0;
     let too_long = width_of(text) > width;
-    let budget = if too_long { width.saturating_sub(1) } else { width };
+    let budget = if too_long {
+        width.saturating_sub(1)
+    } else {
+        width
+    };
     for c in text.chars() {
         let w = width_of(&c.to_string());
         if used + w > budget {
@@ -65,18 +70,26 @@ pub fn draw(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let [title_area, _, worst_heading, worst_area, _, chart_heading, summary_area, chart_area] =
-        Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(WORST_ESTIMATES as u16),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(5),
-        ])
-        .areas(inner);
+    let [
+        title_area,
+        _,
+        worst_heading,
+        worst_area,
+        _,
+        chart_heading,
+        summary_area,
+        chart_area,
+    ] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(WORST_ESTIMATES as u16),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(5),
+    ])
+    .areas(inner);
 
     let mut title = vec![
         Span::styled("STATISTICS", Style::new().fg(theme.stats_title).bold()),
@@ -91,12 +104,23 @@ pub fn draw(
     frame.render_widget(Paragraph::new(Line::from(title)), title_area);
 
     draw_worst_estimates(frame, theme, stats, worst_heading, worst_area);
-    draw_days(frame, theme, stats, today, chart_heading, summary_area, chart_area);
+    draw_days(
+        frame,
+        theme,
+        stats,
+        today,
+        chart_heading,
+        summary_area,
+        chart_area,
+    );
 }
 
 fn heading(theme: &Theme, text: &str, note: &str) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("▌ {text}"), Style::new().fg(theme.stats_heading).bold()),
+        Span::styled(
+            format!("▌ {text}"),
+            Style::new().fg(theme.stats_heading).bold(),
+        ),
         Span::styled(format!("  {note}"), Style::new().fg(theme.stats_dim)),
     ])
 }
@@ -132,7 +156,9 @@ fn draw_worst_estimates(
     // rank (2) + gap, name, gap, bar, gap, "est→spent" (7) + gap + "+N" (4)
     let width = area.width as usize;
     let bar_width = (width / 3).clamp(8, 24);
-    let name_width = width.saturating_sub(2 + 2 + 2 + bar_width + 2 + 7 + 1 + 4).max(8);
+    let name_width = width
+        .saturating_sub(2 + 2 + 2 + bar_width + 2 + 7 + 1 + 4)
+        .max(8);
     let scale = worst.iter().map(|w| w.spent).max().unwrap_or(1).max(1) as usize;
 
     let lines: Vec<Line> = worst
@@ -206,7 +232,10 @@ fn draw_days(
     let total: u32 = days.iter().map(|(_, count)| count).sum();
     let best = days.iter().max_by_key(|(day, count)| (*count, *day));
     let mut summary = vec![
-        Span::styled(format!("{total}"), Style::new().fg(theme.stats_label).bold()),
+        Span::styled(
+            format!("{total}"),
+            Style::new().fg(theme.stats_label).bold(),
+        ),
         Span::styled(" in this period", Style::new().fg(theme.stats_dim)),
         Span::styled("  ·  ", Style::new().fg(theme.stats_dim)),
         Span::styled(
@@ -239,7 +268,12 @@ fn draw_days(
     let bar_width = ((area.width + gap) / CHART_DAYS as u16)
         .saturating_sub(gap)
         .clamp(1, 5);
-    let max = days.iter().map(|(_, count)| *count).max().unwrap_or(0).max(1) as u64;
+    let max = days
+        .iter()
+        .map(|(_, count)| *count)
+        .max()
+        .unwrap_or(0)
+        .max(1) as u64;
 
     let bars: Vec<Bar> = days
         .iter()
@@ -248,7 +282,11 @@ fn draw_days(
             let color = if is_today {
                 theme.stats_today
             } else {
-                blend(theme.stats_chart_low, theme.stats_chart_high, *count as f64 / max as f64)
+                blend(
+                    theme.stats_chart_low,
+                    theme.stats_chart_high,
+                    *count as f64 / max as f64,
+                )
             };
             let label_style = if is_today {
                 Style::new().fg(theme.stats_today).bold()
@@ -257,7 +295,11 @@ fn draw_days(
             };
             Bar::default()
                 .value(*count as u64)
-                .text_value(if *count == 0 { String::new() } else { count.to_string() })
+                .text_value(if *count == 0 {
+                    String::new()
+                } else {
+                    count.to_string()
+                })
                 .label(Line::from(day.format("%d").to_string()).style(label_style))
                 .style(Style::new().fg(color))
                 .value_style(Style::new().fg(theme.stats_bar_text).bg(color).bold())
