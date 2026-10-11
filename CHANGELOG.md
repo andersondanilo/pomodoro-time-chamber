@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.5.0](https://github.com/andersondanilo/pomodoro-time-chamber/compare/v1.4.0...v1.5.0) (2026-10-11)
+
+
+### Features
+
+* ask for confirmation before quitting ([3f3b637](https://github.com/andersondanilo/pomodoro-time-chamber/commit/3f3b637925ee8cebd2cfb2fa18b6ace490c0a4ca))
+* color the TASKS title and show the preset next to it ([c68305b](https://github.com/andersondanilo/pomodoro-time-chamber/commit/c68305ba4af0686b716e5c13d11b3155991bb801))
+* edit the task text with a real text input ([301f9c8](https://github.com/andersondanilo/pomodoro-time-chamber/commit/301f9c8826a6576b0fa447a4b6ff2742ba98fd7f))
+
 ## [1.4.0](https://github.com/andersondanilo/pomodoro-time-chamber/compare/v1.3.0...v1.4.0) (2026-10-11)
 
 
