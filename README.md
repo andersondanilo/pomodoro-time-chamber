@@ -76,6 +76,12 @@ pomodoro or break is active (running, paused or waiting) and stays still while p
 | `i` | Open the statistics page (`Esc` or `i` goes back) |
 | `q` | Quit (asks first: `y` or `q` again to quit, `n` or `Esc` to stay) |
 
+**Typing a task** (after `a` or `e`) works like a normal text field: `Left`/`Right` move the cursor (so you
+can fix a word in the middle), `Home`/`End` jump to the start or end, `Backspace` and `Delete` remove
+around the cursor, `Ctrl+Left`/`Ctrl+Right` move by word, `Ctrl+W` deletes the previous word, `Ctrl+U`
+clears the line and `Ctrl+K` clears to the end. `Enter` saves and `Esc` discards. Long text scrolls
+sideways. It uses the [tui-input](https://crates.io/crates/tui-input) crate.
+
 **How pomodoros are counted.** When a work phase ends, the first task that is not done gets one completed
 pomodoro. If you mark a task as done with `x` while a work phase is running (or paused) and **more than
 half of it has passed**, that pomodoro is credited to the task you marked instead (+1 completed), and

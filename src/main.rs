@@ -16,6 +16,7 @@ use ratatui::{
     widgets::{Block, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 use stats::Stats;
+use tui_input::{Input, backend::crossterm::EventHandler};
 
 mod number_ascii_art;
 mod plugins;
@@ -24,6 +25,8 @@ mod stats_view;
 
 const SIDEBAR_WIDTH: u16 = 40;
 const MIN_ESTIMATED_POMODOROS: u32 = 1;
+/// Columns before the text of a task: the marker (3), a space, the spinner slot (1) and a space.
+const TASK_TEXT_OFFSET: usize = 6;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -488,7 +491,8 @@ struct App {
     last_tasks: Vec<Task>,
     last_pomodoro: PomodoroSnapshot,
     mode: AppMode,
-    input_buffer: String,
+    /// The task text being typed or edited (with a cursor that moves with the arrow keys).
+    input: Input,
     tasks: Vec<Task>,
     selected_task: usize,
     /// Index of the first task shown in the list; keeps the cursor row visible.
@@ -534,7 +538,7 @@ impl App {
                 current_task: None,
             },
             mode: AppMode::Normal,
-            input_buffer: String::new(),
+            input: Input::default(),
             tasks: Vec::new(),
             selected_task: 0,
             scroll_offset: 0,
@@ -935,6 +939,30 @@ impl App {
         total
     }
 
+    /// Columns left for the text of a task row (the cursor needs one of them at the end).
+    fn input_width(row_width: u16) -> usize {
+        (row_width as usize).saturating_sub(TASK_TEXT_OFFSET + 1)
+    }
+
+    /// The part of the typed text that fits in the row, scrolled so the cursor is visible.
+    fn visible_input(&self, row_width: u16) -> String {
+        let width = Self::input_width(row_width);
+        let scroll = self.input.visual_scroll(width);
+        let mut skipped = 0;
+        let mut shown = 0;
+        let mut out = String::new();
+        for c in self.input.value().chars() {
+            let w = Span::raw(c.to_string()).width();
+            if skipped < scroll {
+                skipped += w;
+            } else if shown + w <= width + 1 {
+                out.push(c);
+                shown += w;
+            }
+        }
+        out
+    }
+
     fn draw_tasks(&mut self, frame: &mut Frame, area: Rect) {
         let theme = &self.config.theme;
         let [area, status_area] =
@@ -1005,7 +1033,7 @@ impl App {
             .map(|(i, task)| {
                 let spinner = (current == Some(i)).then(|| self.spinner_frame());
                 if editing && self.editing_task == Some(i) {
-                    self.task_line(task.done, format!("{}█", self.input_buffer), spinner)
+                    self.task_line(task.done, self.visible_input(tasks_area.width), spinner)
                 } else {
                     self.task_line(task.done, task.text.clone(), spinner)
                 }
@@ -1014,7 +1042,7 @@ impl App {
 
         let adding = editing && self.editing_task.is_none();
         if adding {
-            lines.push(self.task_line(false, format!("{}█", self.input_buffer), None));
+            lines.push(self.task_line(false, self.visible_input(tasks_area.width), None));
         }
 
         // Scroll just enough to keep the cursor row (selected task or new task) visible.
@@ -1063,6 +1091,20 @@ impl App {
             Paragraph::new(lines).scroll((self.scroll_offset as u16, 0)),
             tasks_area,
         );
+
+        // The real terminal cursor goes where the next typed character will appear.
+        if editing {
+            let row = self.editing_task.unwrap_or(self.tasks.len());
+            if row >= self.scroll_offset && row < self.scroll_offset + height {
+                let text_width = Self::input_width(tasks_area.width);
+                let scroll = self.input.visual_scroll(text_width);
+                let column = TASK_TEXT_OFFSET + self.input.visual_cursor() - scroll;
+                frame.set_cursor_position((
+                    tasks_area.x + column as u16,
+                    tasks_area.y + (row - self.scroll_offset) as u16,
+                ));
+            }
+        }
 
         // Only when the list overflows; drawn in the panel's right padding column.
         let total = self.tasks.len() + usize::from(adding);
@@ -1285,13 +1327,11 @@ impl App {
             AppMode::TaskTextInput => match key.code {
                 _ if keyboard.confirm_task.matches(&key) => self.action_confirm_task(),
                 _ if keyboard.cancel_task.matches(&key) => self.action_cancel_task(),
-                KeyCode::Backspace => {
-                    self.input_buffer.pop();
+                // Everything else edits the text: characters, Backspace/Delete, Left/Right,
+                // Home/End, Ctrl+W, Ctrl+U, ...
+                _ => {
+                    self.input.handle_event(&Event::Key(key));
                 }
-                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.input_buffer.push(c)
-                }
-                _ => {}
             },
         }
     }
@@ -1400,7 +1440,7 @@ impl App {
     }
 
     fn action_start_add_task(&mut self) {
-        self.input_buffer.clear();
+        self.input = Input::default();
         self.editing_task = None;
         self.mode = AppMode::TaskTextInput;
     }
@@ -1409,20 +1449,21 @@ impl App {
         let Some(task) = self.tasks.get(self.selected_task) else {
             return;
         };
-        self.input_buffer = task.text.clone();
+        // The cursor starts at the end of the text.
+        self.input = Input::new(task.text.clone());
         self.editing_task = Some(self.selected_task);
         self.mode = AppMode::TaskTextInput;
     }
 
     fn action_confirm_task(&mut self) {
-        let text = self.input_buffer.trim();
+        let text = self.input.value().trim().to_string();
         if !text.is_empty() {
             match self.editing_task {
-                Some(i) => self.tasks[i].text = text.to_string(),
+                Some(i) => self.tasks[i].text = text,
                 None => {
                     self.tasks.push(Task {
                         id: 0,
-                        text: text.to_string(),
+                        text,
                         estimated_pomodoros: MIN_ESTIMATED_POMODOROS,
                         completed_pomodoros: 0,
                         done: false,
@@ -1435,7 +1476,7 @@ impl App {
     }
 
     fn action_cancel_task(&mut self) {
-        self.input_buffer.clear();
+        self.input = Input::default();
         self.editing_task = None;
         self.mode = AppMode::Normal;
     }
@@ -2268,5 +2309,101 @@ mod tests {
             .find(|cell| cell.symbol() == "j")
             .unwrap();
         assert_eq!(preset_cell.fg, app.config.theme.tasks_title_dim);
+    }
+
+    fn type_text(app: &mut App, text: &str) {
+        for c in text.chars() {
+            press(app, KeyCode::Char(c));
+        }
+    }
+
+    #[test]
+    fn the_task_text_can_be_edited_in_the_middle() {
+        let mut app = App::new(Config::default());
+        press(&mut app, KeyCode::Char('a'));
+        type_text(&mut app, "abd");
+        press(&mut app, KeyCode::Left);
+        type_text(&mut app, "c");
+        assert_eq!(app.input.value(), "abcd");
+
+        // Backspace and Delete work around the cursor, Home and End jump.
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Backspace); // removes "b"
+        assert_eq!(app.input.value(), "acd");
+        press(&mut app, KeyCode::Delete); // removes "c"
+        assert_eq!(app.input.value(), "ad");
+        press(&mut app, KeyCode::Home);
+        type_text(&mut app, "<");
+        press(&mut app, KeyCode::End);
+        type_text(&mut app, ">");
+        assert_eq!(app.input.value(), "<ad>");
+
+        // Ctrl+W deletes the word before the cursor.
+        type_text(&mut app, " two words");
+        app.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+        assert_eq!(app.input.value(), "<ad> two ");
+
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.tasks[0].text, "<ad> two");
+        assert!(matches!(app.mode, AppMode::Normal));
+    }
+
+    #[test]
+    fn editing_a_task_starts_with_the_cursor_at_the_end_and_escape_discards_the_changes() {
+        let mut app = App::new(Config::default());
+        app.tasks.push(open_task("write docs"));
+
+        press(&mut app, KeyCode::Char('e'));
+        assert_eq!(app.input.value(), "write docs");
+        for _ in 0..4 {
+            press(&mut app, KeyCode::Left);
+        }
+        type_text(&mut app, "the ");
+        assert_eq!(app.input.value(), "write the docs");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.tasks[0].text, "write the docs");
+
+        press(&mut app, KeyCode::Char('e'));
+        type_text(&mut app, "!!!");
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.tasks[0].text, "write the docs");
+
+        // The next add starts empty, not with the old text.
+        press(&mut app, KeyCode::Char('a'));
+        assert_eq!(app.input.value(), "");
+    }
+
+    #[test]
+    fn the_terminal_cursor_follows_the_cursor_of_the_text_even_when_it_scrolls() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut app = App::new(Config::default());
+        let mut terminal = Terminal::new(TestBackend::new(130, 20)).unwrap();
+        let mut cursor = |app: &mut App| {
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            terminal.get_cursor_position().unwrap()
+        };
+
+        // Row 0 of the list is at y = 3; the text starts 6 columns after the panel content x = 42.
+        press(&mut app, KeyCode::Char('a'));
+        type_text(&mut app, "hello");
+        assert_eq!(cursor(&mut app), (42 + 6 + 5, 3).into());
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Left);
+        assert_eq!(cursor(&mut app), (42 + 6 + 3, 3).into());
+
+        // A very long text scrolls: the cursor stays inside the panel and the row shows the end.
+        press(&mut app, KeyCode::End);
+        type_text(&mut app, &"x".repeat(150));
+        let position = cursor(&mut app);
+        assert!(
+            position.x <= 42 + 86,
+            "cursor outside the panel: {position:?}"
+        );
+        let buffer = terminal.backend().buffer().clone();
+        let row: String = (42..130)
+            .map(|x| buffer[(x, 3)].symbol().to_string())
+            .collect();
+        assert!(row.trim_end().ends_with('x'));
+        assert!(!row.contains("hello"), "the start has scrolled out of view");
     }
 }
